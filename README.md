@@ -1,4 +1,4 @@
-# saucebase/installer
+# Saucebase Installer
 
 Dev-environment installer for [Saucebase](https://github.com/saucebase-dev/saucebase) applications.
 
