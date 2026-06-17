@@ -1,0 +1,5 @@
+/.claude/
+/vendor/
+/.vscode
+/composer.lock
+.phpunit.result.cache
