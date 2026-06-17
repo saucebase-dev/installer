@@ -38,7 +38,8 @@ class StackCommandTest extends TestCase
         exec("git -C {$this->tmpDir} commit -q -m 'initial' 2>/dev/null");
 
         $tmpDir = $this->tmpDir;
-        app()->bind(StackCommand::class, fn () => new class(new Filesystem, $tmpDir, $tmpDir.'/resources/js') extends StackCommand {
+        app()->bind(StackCommand::class, fn () => new class(new Filesystem, $tmpDir, $tmpDir.'/resources/js') extends StackCommand
+        {
             protected function runNpmInstall(): void {}
         });
     }
@@ -102,7 +103,8 @@ class StackCommandTest extends TestCase
 
         $tmpDir = $this->tmpDir;
         app()->bind(StackCommand::class, function () use ($tmpDir, $spy) {
-            return new class(new Filesystem, $tmpDir, $tmpDir.'/resources/js', $spy) extends StackCommand {
+            return new class(new Filesystem, $tmpDir, $tmpDir.'/resources/js', $spy) extends StackCommand
+            {
                 private object $spy;
 
                 public function __construct(Filesystem $files, string $basePath, string $jsRoot, object $spy)
