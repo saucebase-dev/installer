@@ -30,7 +30,8 @@ class NativeEnvironmentTest extends TestCase
         $spy = (object) ['installCalled' => false];
 
         app()->bind(InstallCommand::class, function () use ($spy) {
-            return new class ($spy) extends InstallCommand {
+            return new class($spy) extends InstallCommand
+            {
                 public function __construct(public object $spy) {}
 
                 public function install(): int
@@ -53,7 +54,8 @@ class NativeEnvironmentTest extends TestCase
     public function test_run_passes_through_failure_from_install(): void
     {
         app()->bind(InstallCommand::class, function () {
-            return new class extends InstallCommand {
+            return new class extends InstallCommand
+            {
                 public function install(): int
                 {
                     return Command::FAILURE;

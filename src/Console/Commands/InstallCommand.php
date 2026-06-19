@@ -73,8 +73,8 @@ class InstallCommand extends Command
         );
 
         return match ($name) {
-            'docker' => new DockerEnvironment(),
-            default  => new NativeEnvironment(),
+            'docker' => new DockerEnvironment,
+            default => new NativeEnvironment,
         };
     }
 
