@@ -212,16 +212,11 @@ class InstallCommand extends Command
     {
         $this->info('CI environment detected - running minimal setup...');
 
-        $envOk = false;
-        $keyOk = false;
+        $envOk = file_exists(base_path('.env'));
+        $keyOk = ! empty(config('app.key'));
 
-        $this->components->task('Verifying .env', function () use (&$envOk) {
-            return $envOk = file_exists(base_path('.env'));
-        });
-
-        $this->components->task('Verifying app key', function () use (&$keyOk) {
-            return $keyOk = ! empty(config('app.key'));
-        });
+        $this->components->task('Verifying .env', fn () => $envOk);
+        $this->components->task('Verifying app key', fn () => $keyOk);
 
         if (! $envOk || ! $keyOk) {
             return self::FAILURE;
@@ -272,17 +267,14 @@ class InstallCommand extends Command
 
     protected function setupDatabase(): bool
     {
+        $fresh = $this->option('fresh');
+        $label = $fresh ? 'Running migrate:fresh --seed' : 'Running migrations';
+        $command = $fresh ? 'migrate:fresh' : 'migrate';
         $ok = false;
 
-        if ($this->option('fresh')) {
-            $this->components->task('Running migrate:fresh --seed', function () use (&$ok) {
-                return $ok = Artisan::call('migrate:fresh', ['--seed' => true, '--force' => true]) === 0;
-            });
-        } else {
-            $this->components->task('Running migrations', function () use (&$ok) {
-                return $ok = Artisan::call('migrate', ['--seed' => true, '--force' => true]) === 0;
-            });
-        }
+        $this->components->task($label, function () use ($command, &$ok) {
+            return $ok = Artisan::call($command, ['--seed' => true, '--force' => true]) === 0;
+        });
 
         return $ok;
     }
@@ -308,17 +300,18 @@ class InstallCommand extends Command
         // Phase 1: require all selected packages
         $anyFailed = false;
         foreach ($selected as $package) {
-            $this->components->task("Requiring {$package}", function () use ($package, &$anyFailed) {
+            $ok = false;
+            $this->components->task("Requiring {$package}", function () use ($package, &$ok) {
                 $process = new Process(['composer', 'require', $package, '--no-interaction']);
                 $process->setTimeout(300);
                 $process->run();
 
-                if (! $process->isSuccessful()) {
-                    $anyFailed = true;
-                }
-
-                return $process->isSuccessful();
+                return $ok = $process->isSuccessful();
             });
+
+            if (! $ok) {
+                $anyFailed = true;
+            }
         }
 
         if ($anyFailed) {
