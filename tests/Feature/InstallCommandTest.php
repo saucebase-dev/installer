@@ -4,6 +4,8 @@ namespace Saucebase\Installer\Tests\Feature;
 
 use Illuminate\Support\Facades\Http;
 use Saucebase\Installer\Console\Commands\InstallCommand;
+use Saucebase\Installer\Environments\Contracts\Environment;
+use Saucebase\Installer\Environments\NativeEnvironment;
 use Saucebase\Installer\Tests\TestCase;
 
 class InstallCommandTest extends TestCase
@@ -200,7 +202,7 @@ class InstallCommandTest extends TestCase
 
                 protected function generateApplicationKey(): void {}
 
-                protected function setupDatabase(): void {}
+                protected function setupDatabase(): bool { return true; }
 
                 protected function setupModules(): void {}
 
@@ -209,6 +211,11 @@ class InstallCommandTest extends TestCase
                 protected function clearCaches(): void {}
 
                 protected function displaySuccess(): void {}
+
+                protected function resolveDriver(): Environment
+                {
+                    return new NativeEnvironment();
+                }
 
                 public function call($command, array $arguments = [], $outputBuffer = null): int
                 {
@@ -227,6 +234,180 @@ class InstallCommandTest extends TestCase
         $this->artisan('saucebase:install vue --all-modules')->assertSuccessful();
 
         $this->assertSame(1, $spy->stackCallCount, 'saucebase:stack must be called exactly once during install()');
+    }
+
+    // -------------------------------------------------------------------------
+    // --in-container flag
+    // -------------------------------------------------------------------------
+
+    public function test_driver_native_skips_the_select_prompt(): void
+    {
+        $spy = (object) ['selectCalled' => false];
+
+        app()->bind(InstallCommand::class, function () use ($spy) {
+            $cmd = new class extends InstallCommand {
+                public object $spy;
+
+                protected function resolveDriver(): Environment
+                {
+                    // if --driver is provided, select() is never reached
+                    if ($this->option('driver')) {
+                        return new NativeEnvironment;
+                    }
+
+                    $this->spy->selectCalled = true;
+
+                    return new NativeEnvironment;
+                }
+
+                protected function ensureEnvFile(): bool { return true; }
+
+                protected function generateApplicationKey(): void {}
+
+                protected function setupDatabase(): bool { return true; }
+
+                protected function setupModules(): void {}
+
+                protected function createStorageLink(): void {}
+
+                protected function clearCaches(): void {}
+
+                protected function displaySuccess(): void {}
+            };
+            $cmd->spy = $spy;
+
+            return $cmd;
+        });
+
+        $this->artisan('saucebase:install vue --driver=native --all-modules')->assertSuccessful();
+
+        $this->assertFalse($spy->selectCalled, '--driver=native must not reach the select() prompt');
+    }
+
+    public function test_driver_native_runs_install_without_prompting(): void
+    {
+
+        app()->bind(InstallCommand::class, function () {
+            return new class extends InstallCommand {
+                protected function ensureEnvFile(): bool { return true; }
+
+                protected function generateApplicationKey(): void {}
+
+                protected function setupDatabase(): bool { return true; }
+
+                protected function setupModules(): void {}
+
+                protected function createStorageLink(): void {}
+
+                protected function clearCaches(): void {}
+
+                protected function displaySuccess(): void {}
+            };
+        });
+
+        $this->artisan('saucebase:install vue --driver=native --all-modules')->assertSuccessful();
+    }
+
+    // -------------------------------------------------------------------------
+    // handleCIInstallation exit codes
+    // -------------------------------------------------------------------------
+
+    public function test_ci_installation_returns_failure_when_env_file_missing(): void
+    {
+        app()->bind(InstallCommand::class, function () {
+            return new class extends InstallCommand {
+                protected function isCI(): bool { return true; }
+            };
+        });
+
+        // No .env in the Testbench app root — task will return false
+        $this->artisan('saucebase:install vue')->assertFailed();
+    }
+
+    // -------------------------------------------------------------------------
+    // install() halts on setupDatabase failure
+    // -------------------------------------------------------------------------
+
+    public function test_install_returns_failure_and_skips_modules_when_database_setup_fails(): void
+    {
+        $spy = (object) ['modulesSetupCalled' => false];
+
+        app()->bind(InstallCommand::class, function () use ($spy) {
+            $cmd = new class extends InstallCommand {
+                public object $spy;
+
+                protected function ensureEnvFile(): bool { return true; }
+
+                protected function generateApplicationKey(): void {}
+
+                protected function setupDatabase(): bool { return false; }
+
+                protected function setupModules(): void
+                {
+                    $this->spy->modulesSetupCalled = true;
+                }
+
+                protected function createStorageLink(): void {}
+
+                protected function clearCaches(): void {}
+
+                protected function displaySuccess(): void {}
+
+                protected function resolveDriver(): \Saucebase\Installer\Environments\Contracts\Environment
+                {
+                    return new NativeEnvironment();
+                }
+
+                public function call($command, array $arguments = [], $outputBuffer = null): int { return 0; }
+            };
+            $cmd->spy = $spy;
+
+            return $cmd;
+        });
+
+        $this->artisan('saucebase:install vue --driver=native --all-modules')->assertFailed();
+        $this->assertFalse($spy->modulesSetupCalled, 'setupModules() must not run after a failed migration');
+    }
+
+    // -------------------------------------------------------------------------
+    // resolveModuleSelection — --all-modules framework filtering
+    // -------------------------------------------------------------------------
+
+    public function test_all_modules_filters_by_selected_stack(): void
+    {
+        $cmd = new TestableInstallCommand;
+        $cmd->setSelectedStack('vue');
+        $cmd->fakeOptions = ['all-modules' => true];
+        $cmd->frameworkFixtures = [
+            'saucebase/auth'       => ['vue', 'react'],
+            'saucebase/billing'    => ['vue'],
+            'saucebase/react-only' => ['react'],
+        ];
+
+        $result = $cmd->exposedResolveModuleSelection(
+            ['saucebase/auth', 'saucebase/billing', 'saucebase/react-only']
+        );
+
+        $this->assertContains('saucebase/auth', $result);
+        $this->assertContains('saucebase/billing', $result);
+        $this->assertNotContains('saucebase/react-only', $result, '--all-modules with vue stack must exclude react-only modules');
+    }
+
+    public function test_all_modules_without_stack_returns_all(): void
+    {
+        $cmd = new TestableInstallCommand;
+        $cmd->setSelectedStack(null);
+        $cmd->fakeOptions = ['all-modules' => true];
+        $cmd->frameworkFixtures = [
+            'saucebase/auth'       => ['vue'],
+            'saucebase/react-only' => ['react'],
+        ];
+
+        $result = $cmd->exposedResolveModuleSelection(
+            ['saucebase/auth', 'saucebase/react-only']
+        );
+
+        $this->assertSame(['saucebase/auth', 'saucebase/react-only'], $result);
     }
 
     // -------------------------------------------------------------------------
@@ -260,6 +441,11 @@ class TestableInstallCommand extends InstallCommand
 
     private ?string $customModulesBasePath;
 
+    public function setSelectedStack(?string $stack): void
+    {
+        $this->selectedStack = $stack;
+    }
+
     public function __construct(?string $modulesBasePath = null)
     {
         parent::__construct();
@@ -275,6 +461,24 @@ class TestableInstallCommand extends InstallCommand
     public function exposedFilterModulesByFramework(array $packages, string $framework): array
     {
         return $this->filterModulesByFramework($packages, $framework);
+    }
+
+    /** @var array<string, bool|string|null> Fake option values for tests that bypass CLI input. */
+    public array $fakeOptions = [];
+
+    public function option($key = null): string|array|bool|null
+    {
+        if (! empty($this->fakeOptions)) {
+            return $key !== null ? ($this->fakeOptions[$key] ?? false) : $this->fakeOptions;
+        }
+
+        return parent::option($key);
+    }
+
+    /** @param  string[]  $available */
+    public function exposedResolveModuleSelection(array $available): array
+    {
+        return $this->resolveModuleSelection($available);
     }
 
     protected function fetchPackageFrameworks(string $package): array
