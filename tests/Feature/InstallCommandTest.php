@@ -252,6 +252,8 @@ class InstallCommandTest extends TestCase
             {
                 public object $spy;
 
+                protected function isCI(): bool { return false; }
+
                 protected function resolveDriver(): Environment
                 {
                     // if --driver is provided, select() is never reached
@@ -300,6 +302,8 @@ class InstallCommandTest extends TestCase
         app()->bind(InstallCommand::class, function () {
             return new class extends InstallCommand
             {
+                protected function isCI(): bool { return false; }
+
                 protected function ensureEnvFile(): bool
                 {
                     return true;
