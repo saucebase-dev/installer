@@ -23,7 +23,8 @@ class InstallCommand extends Command
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--modules= : Comma-separated list of modules to enable (e.g. Auth,Settings)}
                             {--dev : Dev environment}
-                            {--force : Skip confirmations}';
+                            {--force : Skip confirmations}
+                            {--no-logo : Suppress the welcome banner}';
 
     protected $description = 'Install and configure Saucebase';
 
@@ -40,7 +41,10 @@ class InstallCommand extends Command
 
     public function handle(): int
     {
-        $this->displayWelcome();
+        if (! $this->option('no-logo')) {
+            $this->displayWelcome();
+        }
+
         $this->captureStack();
 
         if ($this->isCI()) {

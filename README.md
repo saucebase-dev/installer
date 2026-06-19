@@ -46,6 +46,7 @@ Prompts for the frontend stack (Vue or React) and the environment driver (Docker
 | `--modules=auth,billing` | Install specific modules by name (comma-separated) |
 | `--dev` | Contributor mode — skips module installation |
 | `--force` | Skip confirmations |
+| `--no-logo` | Suppress the welcome banner (passed automatically when running inside a container) |
 
 **Examples**
 

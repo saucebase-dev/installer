@@ -154,7 +154,7 @@ class DockerEnvironment implements Environment
     /** @return string[] */
     public function buildContainerArgs(InstallCommand $command): array
     {
-        $args = ['php', 'artisan', 'saucebase:install', '--driver=native', '--force'];
+        $args = ['php', 'artisan', 'saucebase:install', '--driver=native', '--force', '--no-logo'];
 
         if ($stack = $command->getSelectedStack()) {
             $args[] = $stack;
