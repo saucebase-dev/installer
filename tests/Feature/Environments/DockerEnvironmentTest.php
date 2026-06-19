@@ -135,7 +135,8 @@ class DockerEnvironmentTest extends TestCase
     {
         $spy = (object) ['composerCalled' => false];
 
-        $env = new class ($spy) extends DockerEnvironment {
+        $env = new class($spy) extends DockerEnvironment
+        {
             public function __construct(private object $spy) {}
 
             protected function publishStubs(InstallCommand $command): void {}
@@ -165,7 +166,8 @@ class DockerEnvironmentTest extends TestCase
     {
         $spy = (object) ['installCalled' => false];
 
-        $env = new class ($spy) extends DockerEnvironment {
+        $env = new class($spy) extends DockerEnvironment
+        {
             public function __construct(private object $spy) {}
 
             protected function publishStubs(InstallCommand $command): void {}

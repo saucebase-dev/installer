@@ -202,7 +202,10 @@ class InstallCommandTest extends TestCase
 
                 protected function generateApplicationKey(): void {}
 
-                protected function setupDatabase(): bool { return true; }
+                protected function setupDatabase(): bool
+                {
+                    return true;
+                }
 
                 protected function setupModules(): void {}
 
@@ -214,7 +217,7 @@ class InstallCommandTest extends TestCase
 
                 protected function resolveDriver(): Environment
                 {
-                    return new NativeEnvironment();
+                    return new NativeEnvironment;
                 }
 
                 public function call($command, array $arguments = [], $outputBuffer = null): int
@@ -245,7 +248,8 @@ class InstallCommandTest extends TestCase
         $spy = (object) ['selectCalled' => false];
 
         app()->bind(InstallCommand::class, function () use ($spy) {
-            $cmd = new class extends InstallCommand {
+            $cmd = new class extends InstallCommand
+            {
                 public object $spy;
 
                 protected function resolveDriver(): Environment
@@ -260,11 +264,17 @@ class InstallCommandTest extends TestCase
                     return new NativeEnvironment;
                 }
 
-                protected function ensureEnvFile(): bool { return true; }
+                protected function ensureEnvFile(): bool
+                {
+                    return true;
+                }
 
                 protected function generateApplicationKey(): void {}
 
-                protected function setupDatabase(): bool { return true; }
+                protected function setupDatabase(): bool
+                {
+                    return true;
+                }
 
                 protected function setupModules(): void {}
 
@@ -288,12 +298,19 @@ class InstallCommandTest extends TestCase
     {
 
         app()->bind(InstallCommand::class, function () {
-            return new class extends InstallCommand {
-                protected function ensureEnvFile(): bool { return true; }
+            return new class extends InstallCommand
+            {
+                protected function ensureEnvFile(): bool
+                {
+                    return true;
+                }
 
                 protected function generateApplicationKey(): void {}
 
-                protected function setupDatabase(): bool { return true; }
+                protected function setupDatabase(): bool
+                {
+                    return true;
+                }
 
                 protected function setupModules(): void {}
 
@@ -315,8 +332,12 @@ class InstallCommandTest extends TestCase
     public function test_ci_installation_returns_failure_when_env_file_missing(): void
     {
         app()->bind(InstallCommand::class, function () {
-            return new class extends InstallCommand {
-                protected function isCI(): bool { return true; }
+            return new class extends InstallCommand
+            {
+                protected function isCI(): bool
+                {
+                    return true;
+                }
             };
         });
 
@@ -333,14 +354,21 @@ class InstallCommandTest extends TestCase
         $spy = (object) ['modulesSetupCalled' => false];
 
         app()->bind(InstallCommand::class, function () use ($spy) {
-            $cmd = new class extends InstallCommand {
+            $cmd = new class extends InstallCommand
+            {
                 public object $spy;
 
-                protected function ensureEnvFile(): bool { return true; }
+                protected function ensureEnvFile(): bool
+                {
+                    return true;
+                }
 
                 protected function generateApplicationKey(): void {}
 
-                protected function setupDatabase(): bool { return false; }
+                protected function setupDatabase(): bool
+                {
+                    return false;
+                }
 
                 protected function setupModules(): void
                 {
@@ -353,12 +381,15 @@ class InstallCommandTest extends TestCase
 
                 protected function displaySuccess(): void {}
 
-                protected function resolveDriver(): \Saucebase\Installer\Environments\Contracts\Environment
+                protected function resolveDriver(): Environment
                 {
-                    return new NativeEnvironment();
+                    return new NativeEnvironment;
                 }
 
-                public function call($command, array $arguments = [], $outputBuffer = null): int { return 0; }
+                public function call($command, array $arguments = [], $outputBuffer = null): int
+                {
+                    return 0;
+                }
             };
             $cmd->spy = $spy;
 
@@ -379,8 +410,8 @@ class InstallCommandTest extends TestCase
         $cmd->setSelectedStack('vue');
         $cmd->fakeOptions = ['all-modules' => true];
         $cmd->frameworkFixtures = [
-            'saucebase/auth'       => ['vue', 'react'],
-            'saucebase/billing'    => ['vue'],
+            'saucebase/auth' => ['vue', 'react'],
+            'saucebase/billing' => ['vue'],
             'saucebase/react-only' => ['react'],
         ];
 
@@ -399,7 +430,7 @@ class InstallCommandTest extends TestCase
         $cmd->setSelectedStack(null);
         $cmd->fakeOptions = ['all-modules' => true];
         $cmd->frameworkFixtures = [
-            'saucebase/auth'       => ['vue'],
+            'saucebase/auth' => ['vue'],
             'saucebase/react-only' => ['react'],
         ];
 
