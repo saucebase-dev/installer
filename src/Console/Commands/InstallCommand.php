@@ -6,6 +6,9 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use Saucebase\Installer\Environments\Contracts\Environment;
+use Saucebase\Installer\Environments\DockerEnvironment;
+use Saucebase\Installer\Environments\NativeEnvironment;
 use Symfony\Component\Process\Process;
 
 use function Laravel\Prompts\multiselect;
@@ -15,6 +18,7 @@ class InstallCommand extends Command
 {
     protected $signature = 'saucebase:install
                             {stack? : The frontend stack to install (vue or react)}
+                            {--driver= : Environment driver (docker, native) — prompted if omitted}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--modules= : Comma-separated list of modules to enable (e.g. Auth,Settings)}
@@ -43,9 +47,35 @@ class InstallCommand extends Command
             return $this->handleCIInstallation();
         }
 
+        $driver = $this->resolveDriver();
         $this->promptForModules();
 
-        return $this->install();
+        return $driver->run($this);
+    }
+
+    public function getSelectedStack(): ?string
+    {
+        return $this->selectedStack;
+    }
+
+    /** @return string[] */
+    public function getSelectedModules(): array
+    {
+        return $this->selectedModules;
+    }
+
+    protected function resolveDriver(): Environment
+    {
+        $name = $this->option('driver') ?? select(
+            label: 'How would you like to run Saucebase?',
+            options: ['docker' => 'Docker (recommended)', 'native' => 'Native PHP'],
+            default: 'docker',
+        );
+
+        return match ($name) {
+            'docker' => new DockerEnvironment,
+            default => new NativeEnvironment,
+        };
     }
 
     protected function captureStack(): void
@@ -157,14 +187,18 @@ class InstallCommand extends Command
         return base_path('modules');
     }
 
-    protected function install(): int
+    public function install(): int
     {
         if (! $this->ensureEnvFile()) {
             return self::FAILURE;
         }
 
         $this->generateApplicationKey();
-        $this->setupDatabase();
+
+        if (! $this->setupDatabase()) {
+            return self::FAILURE;
+        }
+
         $this->runStack();
         $this->setupModules();
         $this->createStorageLink();
@@ -178,8 +212,15 @@ class InstallCommand extends Command
     {
         $this->info('CI environment detected - running minimal setup...');
 
-        $this->components->task('Verifying .env', fn () => file_exists(base_path('.env')));
-        $this->components->task('Verifying app key', fn () => ! empty(config('app.key')));
+        $envOk = file_exists(base_path('.env'));
+        $keyOk = ! empty(config('app.key'));
+
+        $this->components->task('Verifying .env', fn () => $envOk);
+        $this->components->task('Verifying app key', fn () => $keyOk);
+
+        if (! $envOk || ! $keyOk) {
+            return self::FAILURE;
+        }
 
         $this->info('CI setup complete');
 
@@ -211,6 +252,11 @@ class InstallCommand extends Command
     {
         $this->components->task('Generating application key', function () {
             $env = file_get_contents(base_path('.env'));
+
+            if ($env === false) {
+                return Artisan::call('key:generate', ['--force' => true]) === 0;
+            }
+
             if (preg_match('/^APP_KEY=base64:.+$/m', $env)) {
                 return true;
             }
@@ -219,17 +265,18 @@ class InstallCommand extends Command
         });
     }
 
-    protected function setupDatabase(): void
+    protected function setupDatabase(): bool
     {
-        if ($this->option('fresh')) {
-            $this->components->task('Running migrate:fresh --seed', function () {
-                return Artisan::call('migrate:fresh', ['--seed' => true, '--force' => true]) === 0;
-            });
-        } else {
-            $this->components->task('Running migrations', function () {
-                return Artisan::call('migrate', ['--seed' => true, '--force' => true]) === 0;
-            });
-        }
+        $fresh = $this->option('fresh');
+        $label = $fresh ? 'Running migrate:fresh --seed' : 'Running migrations';
+        $command = $fresh ? 'migrate:fresh' : 'migrate';
+        $ok = false;
+
+        $this->components->task($label, function () use ($command, &$ok) {
+            return $ok = Artisan::call($command, ['--seed' => true, '--force' => true]) === 0;
+        });
+
+        return $ok;
     }
 
     protected function setupModules(): void
@@ -251,14 +298,26 @@ class InstallCommand extends Command
         $this->newLine();
 
         // Phase 1: require all selected packages
+        $anyFailed = false;
         foreach ($selected as $package) {
-            $this->components->task("Requiring {$package}", function () use ($package) {
+            $ok = false;
+            $this->components->task("Requiring {$package}", function () use ($package, &$ok) {
                 $process = new Process(['composer', 'require', $package, '--no-interaction']);
                 $process->setTimeout(300);
                 $process->run();
 
-                return $process->isSuccessful();
+                return $ok = $process->isSuccessful();
             });
+
+            if (! $ok) {
+                $anyFailed = true;
+            }
+        }
+
+        if ($anyFailed) {
+            $this->components->warn('One or more packages failed to install — skipping module sync and migrations.');
+
+            return;
         }
 
         // Phase 2: regenerate autoload once for all new modules
@@ -318,9 +377,11 @@ class InstallCommand extends Command
      */
     protected function resolveModuleSelection(array $available): array
     {
-        // 1. Select all modules
+        // 1. Select all modules (filtered to the chosen stack if one is set)
         if ($this->option('all-modules')) {
-            return $available;
+            return $this->selectedStack
+                ? $this->filterModulesByFramework($available, $this->selectedStack)
+                : $available;
         }
 
         // 2. Modules passed via --modules option

@@ -6,6 +6,8 @@ use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
 use Symfony\Component\Process\Process;
 
+use function Laravel\Prompts\select;
+
 class StackCommand extends Command
 {
     protected $signature = 'saucebase:stack
@@ -46,6 +48,14 @@ class StackCommand extends Command
 
         $framework = strtolower($this->argument('stack') ?? '');
 
+        if ($framework === '') {
+            $framework = select(
+                label: 'Which frontend stack would you like to use?',
+                options: array_combine(self::SUPPORTED, array_map('ucfirst', self::SUPPORTED)),
+                default: 'vue',
+            );
+        }
+
         if (! in_array($framework, self::SUPPORTED)) {
             $this->error("Invalid framework '{$framework}'. Supported: ".implode(', ', self::SUPPORTED).'.');
 
@@ -85,13 +95,13 @@ class StackCommand extends Command
         $this->copyConfigFiles($framework, rewrite: true);
         $this->copyLockFile($framework);
         $this->copyViewFiles($framework);
+        $this->writeFrontendJson($framework);
         $this->files->deleteDirectory($this->jsRoot.'/vue');
         $this->files->deleteDirectory($this->jsRoot.'/react');
         $this->files->deleteDirectory($this->basePath.'/stubs/saucebase/stack');
         $this->deployModuleFiles($framework);
         $this->rewriteCrossModuleImports($framework);
         $this->flattenRecipeStubs($framework);
-        $this->writeFrontendJson($framework);
         $this->info("Framework set to {$framework}. Run: npm install && composer dev");
 
         return self::SUCCESS;
@@ -142,7 +152,9 @@ class StackCommand extends Command
         $this->restoreTrackedFiles($framework);
 
         foreach ($this->generatedFiles($framework) as $file) {
-            exec("git -C {$this->basePath} checkout -- {$file} 2>&1", $output, $exitCode);
+            $process = new Process(['git', '-C', $this->basePath, 'checkout', '--', $file]);
+            $process->run();
+            $exitCode = $process->getExitCode();
 
             if ($exitCode !== 0) {
                 // Module files are tracked in their own repos — skip-worktree was already
@@ -385,9 +397,10 @@ class StackCommand extends Command
         }
 
         foreach ($this->generatedFiles($framework) as $file) {
-            exec("git -C {$this->basePath} update-index --skip-worktree {$file} 2>&1", $output, $exitCode);
+            $process = new Process(['git', '-C', $this->basePath, 'update-index', '--skip-worktree', $file]);
+            $process->run();
 
-            if ($exitCode !== 0) {
+            if ($process->getExitCode() !== 0) {
                 $this->warn("Could not skip-worktree {$file} (not in git index).");
             }
         }
@@ -396,7 +409,7 @@ class StackCommand extends Command
     private function restoreTrackedFiles(string $framework): void
     {
         foreach ($this->generatedFiles($framework) as $file) {
-            exec("git -C {$this->basePath} update-index --no-skip-worktree {$file} 2>/dev/null");
+            (new Process(['git', '-C', $this->basePath, 'update-index', '--no-skip-worktree', $file]))->run();
         }
     }
 
