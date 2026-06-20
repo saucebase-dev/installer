@@ -19,6 +19,23 @@ class DockerEnvironment implements Environment
         return 'Docker';
     }
 
+    public function missingPrerequisites(): array
+    {
+        $missing = [];
+
+        if (! $this->commandExists('docker')) {
+            $missing[] = 'docker is not installed or not in PATH.';
+        } elseif (! $this->dockerComposeAvailable()) {
+            $missing[] = '"docker compose" subcommand is not available. Ensure Docker Desktop or a Compose plugin is installed.';
+        }
+
+        if (! $this->commandExists('npm')) {
+            $missing[] = 'npm is not installed or not in PATH.';
+        }
+
+        return $missing;
+    }
+
     public function run(InstallCommand $command): int
     {
         $this->publishStubs($command);
@@ -174,7 +191,12 @@ class DockerEnvironment implements Environment
         return $args;
     }
 
-    private function commandExists(string $name): bool
+    protected function dockerComposeAvailable(): bool
+    {
+        return (bool) shell_exec('docker compose version 2>/dev/null');
+    }
+
+    protected function commandExists(string $name): bool
     {
         return (bool) shell_exec("which {$name} 2>/dev/null");
     }

@@ -10,5 +10,8 @@ interface Environment
 
     public function label(): string;
 
+    /** @return array<string> Human-readable error messages for each unmet prerequisite; empty means all good. */
+    public function missingPrerequisites(): array;
+
     public function run(InstallCommand $command): int;
 }

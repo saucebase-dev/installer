@@ -128,6 +128,80 @@ class DockerEnvironmentTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // missingPrerequisites
+    // -------------------------------------------------------------------------
+
+    public function test_missing_prerequisites_returns_empty_when_all_tools_present(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function commandExists(string $name): bool { return true; }
+
+            protected function dockerComposeAvailable(): bool { return true; }
+        };
+
+        $this->assertSame([], $env->missingPrerequisites());
+    }
+
+    public function test_missing_prerequisites_reports_docker_missing(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function commandExists(string $name): bool { return $name !== 'docker'; }
+
+            protected function dockerComposeAvailable(): bool { return true; }
+        };
+
+        $missing = $env->missingPrerequisites();
+        $this->assertCount(1, $missing);
+        $this->assertStringContainsString('docker', $missing[0]);
+    }
+
+    public function test_missing_prerequisites_reports_docker_compose_missing(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function commandExists(string $name): bool { return true; }
+
+            protected function dockerComposeAvailable(): bool { return false; }
+        };
+
+        $missing = $env->missingPrerequisites();
+        $this->assertCount(1, $missing);
+        $this->assertStringContainsString('docker compose', $missing[0]);
+    }
+
+    public function test_missing_prerequisites_reports_npm_missing(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function commandExists(string $name): bool { return $name !== 'npm'; }
+
+            protected function dockerComposeAvailable(): bool { return true; }
+        };
+
+        $missing = $env->missingPrerequisites();
+        $this->assertCount(1, $missing);
+        $this->assertStringContainsString('npm', $missing[0]);
+    }
+
+    public function test_missing_prerequisites_skips_compose_check_when_docker_itself_missing(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function commandExists(string $name): bool { return false; }
+
+            protected function dockerComposeAvailable(): bool { return false; }
+        };
+
+        $missing = $env->missingPrerequisites();
+        // docker + npm missing; docker compose check is skipped via elseif
+        $this->assertCount(2, $missing);
+        $this->assertStringContainsString('docker', $missing[0]);
+        $this->assertStringContainsString('npm', $missing[1]);
+    }
+
+    // -------------------------------------------------------------------------
     // run() failure propagation
     // -------------------------------------------------------------------------
 

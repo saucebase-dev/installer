@@ -2,6 +2,7 @@
 
 namespace Saucebase\Installer\Tests\Feature;
 
+use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Environments\Contracts\Environment;
@@ -333,6 +334,59 @@ class InstallCommandTest extends TestCase
         });
 
         $this->artisan('saucebase:install vue --driver=native --all-modules')->assertSuccessful();
+    }
+
+    // -------------------------------------------------------------------------
+    // missingPrerequisites gate in handle()
+    // -------------------------------------------------------------------------
+
+    public function test_handle_returns_failure_and_skips_run_when_prerequisites_not_met(): void
+    {
+        $spy = (object) ['runCalled' => false];
+
+        app()->bind(InstallCommand::class, function () use ($spy) {
+            return new class($spy) extends InstallCommand
+            {
+                public function __construct(private object $spy)
+                {
+                    parent::__construct();
+                }
+
+                protected function isCI(): bool
+                {
+                    return false;
+                }
+
+                protected function resolveDriver(): Environment
+                {
+                    $spy = $this->spy;
+
+                    return new class($spy) implements Environment
+                    {
+                        public function __construct(private object $spy) {}
+
+                        public function name(): string { return 'fake'; }
+
+                        public function label(): string { return 'Fake'; }
+
+                        public function missingPrerequisites(): array
+                        {
+                            return ['fake-tool is not installed or not in PATH.'];
+                        }
+
+                        public function run(InstallCommand $command): int
+                        {
+                            $this->spy->runCalled = true;
+
+                            return Command::SUCCESS;
+                        }
+                    };
+                }
+            };
+        });
+
+        $this->artisan('saucebase:install vue --all-modules')->assertFailed();
+        $this->assertFalse($spy->runCalled, 'run() must not be called when prerequisites are not met');
     }
 
     // -------------------------------------------------------------------------

@@ -52,6 +52,16 @@ class InstallCommand extends Command
         }
 
         $driver = $this->resolveDriver();
+
+        $missing = $driver->missingPrerequisites();
+        if (! empty($missing)) {
+            foreach ($missing as $message) {
+                $this->error($message);
+            }
+
+            return self::FAILURE;
+        }
+
         $this->promptForModules();
 
         return $driver->run($this);
