@@ -196,7 +196,7 @@ class InstallCommandTest extends TestCase
                     return false;
                 }
 
-                protected function ensureEnvFile(): bool
+                public function ensureEnvFile(): bool
                 {
                     return true;
                 }
@@ -270,7 +270,7 @@ class InstallCommandTest extends TestCase
                     return new NativeEnvironment;
                 }
 
-                protected function ensureEnvFile(): bool
+                public function ensureEnvFile(): bool
                 {
                     return true;
                 }
@@ -311,7 +311,7 @@ class InstallCommandTest extends TestCase
                     return false;
                 }
 
-                protected function ensureEnvFile(): bool
+                public function ensureEnvFile(): bool
                 {
                     return true;
                 }
@@ -422,7 +422,7 @@ class InstallCommandTest extends TestCase
             {
                 public object $spy;
 
-                protected function ensureEnvFile(): bool
+                public function ensureEnvFile(): bool
                 {
                     return true;
                 }

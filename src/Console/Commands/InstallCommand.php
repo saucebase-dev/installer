@@ -82,8 +82,11 @@ class InstallCommand extends Command
     {
         $name = $this->option('driver') ?? select(
             label: 'How would you like to run Saucebase?',
-            options: ['docker' => 'Docker (recommended)', 'native' => 'Native PHP'],
-            default: 'docker',
+            options: [
+                'native' => 'Native PHP - minimal setup, ideal for exploring',
+                'docker' => 'Docker - recommended for real projects: MySQL, Redis, Mailpit, HTTPS',
+            ],
+            default: 'native',
         );
 
         return match ($name) {
@@ -241,7 +244,7 @@ class InstallCommand extends Command
         return self::SUCCESS;
     }
 
-    protected function ensureEnvFile(): bool
+    public function ensureEnvFile(): bool
     {
         if (file_exists(base_path('.env'))) {
             return true;

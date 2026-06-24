@@ -41,6 +41,12 @@ class DockerEnvironment implements Environment
         $this->publishStubs($command);
         $this->generateSsl($command);
 
+        if (! $command->ensureEnvFile()) {
+            return InstallCommand::FAILURE;
+        }
+
+        $this->setDockerEnvDefaults($command);
+
         if (! $this->startDocker($command)) {
             return InstallCommand::FAILURE;
         }
@@ -97,12 +103,15 @@ class DockerEnvironment implements Environment
 
     protected function startDocker(InstallCommand $command): bool
     {
-        $command->info('Starting Docker services...');
-        (new Process(['docker', 'compose', 'restart']))->run();
+        $command->info('Starting Docker services (this may take a few minutes while pulling images and starting containers)...');
 
-        $up = new Process(['docker', 'compose', 'up', '-d', '--wait']);
-        $up->setTimeout(120);
-        $up->run();
+        $restart = new Process(['docker', 'compose', 'restart']);
+        $restart->setTimeout(60);
+        $restart->run();
+
+        $up = new Process(['docker', 'compose', 'up', '-d', '--wait', '--build']);
+        $up->setTimeout(30 * 60); // 30 minutes — first run pulls images + builds layers
+        $up->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
 
         if (! $up->isSuccessful()) {
             $command->error('Docker failed to start: '.$up->getErrorOutput());
@@ -189,6 +198,66 @@ class DockerEnvironment implements Environment
         }
 
         return $args;
+    }
+
+    protected function setDockerEnvDefaults(InstallCommand $command): void
+    {
+        $path = base_path('.env');
+        $original = file_get_contents($path);
+
+        if ($original === false) {
+            return;
+        }
+
+        $modified = $this->applyDockerEnvDefaults($original);
+
+        if ($modified !== $original) {
+            file_put_contents($path, $modified);
+            $command->info('Docker database credentials written to .env.');
+        }
+    }
+
+    protected function applyDockerEnvDefaults(string $env): string
+    {
+        $slug = 'saucebase';
+        if (preg_match('/^APP_SLUG=([^\s]+)/m', $env, $m)) {
+            $slug = trim($m[1], "\"'");
+        }
+
+        // Docker always needs mysql, not sqlite
+        if (preg_match('/^DB_CONNECTION=(.*)$/m', $env, $m) && trim($m[1]) !== 'mysql') {
+            $env = preg_replace('/^DB_CONNECTION=.*$/m', 'DB_CONNECTION=mysql', $env);
+        } elseif (! preg_match('/^DB_CONNECTION=/m', $env)) {
+            $env .= "\nDB_CONNECTION=mysql";
+        }
+
+        // Docker routes mail through the Mailpit container via SMTP
+        if (preg_match('/^MAIL_MAILER=(.*)$/m', $env, $m) && trim($m[1]) !== 'smtp') {
+            $env = preg_replace('/^MAIL_MAILER=.*$/m', 'MAIL_MAILER=smtp', $env);
+        } elseif (! preg_match('/^MAIL_MAILER=/m', $env)) {
+            $env .= "\nMAIL_MAILER=smtp";
+        }
+
+        // Set missing or blank values; respect anything the user has already configured
+        $defaults = [
+            'DB_HOST'     => 'mysql',
+            'DB_PORT'     => '3306',
+            'DB_DATABASE' => $slug,
+            'DB_USERNAME' => $slug,
+            'DB_PASSWORD' => 'secret',
+        ];
+
+        foreach ($defaults as $key => $value) {
+            if (preg_match('/^'.preg_quote($key, '/').'=(.*)$/m', $env, $m)) {
+                if (trim($m[1]) === '') {
+                    $env = preg_replace('/^'.preg_quote($key, '/').'=.*$/m', "{$key}={$value}", $env);
+                }
+            } else {
+                $env .= "\n{$key}={$value}";
+            }
+        }
+
+        return $env;
     }
 
     protected function dockerComposeAvailable(): bool
