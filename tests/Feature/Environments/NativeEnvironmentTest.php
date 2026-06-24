@@ -33,7 +33,10 @@ class NativeEnvironmentTest extends TestCase
     {
         $env = new class extends NativeEnvironment
         {
-            protected function commandExists(string $name): bool { return true; }
+            protected function commandExists(string $name): bool
+            {
+                return true;
+            }
         };
 
         $this->assertSame([], $env->missingPrerequisites());
@@ -43,7 +46,10 @@ class NativeEnvironmentTest extends TestCase
     {
         $env = new class extends NativeEnvironment
         {
-            protected function commandExists(string $name): bool { return false; }
+            protected function commandExists(string $name): bool
+            {
+                return false;
+            }
         };
 
         $missing = $env->missingPrerequisites();
