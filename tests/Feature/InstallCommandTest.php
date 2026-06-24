@@ -408,10 +408,14 @@ class InstallCommandTest extends TestCase
                 {
                     return true;
                 }
+
+                public function ensureEnvFile(): bool
+                {
+                    return false;
+                }
             };
         });
 
-        // No .env in the Testbench app root — task will return false
         $this->artisan('saucebase:install vue')->assertFailed();
     }
 
@@ -427,6 +431,11 @@ class InstallCommandTest extends TestCase
             $cmd = new class extends InstallCommand
             {
                 public object $spy;
+
+                protected function isCI(): bool
+                {
+                    return false;
+                }
 
                 public function ensureEnvFile(): bool
                 {

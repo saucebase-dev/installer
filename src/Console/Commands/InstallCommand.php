@@ -229,7 +229,7 @@ class InstallCommand extends Command
     {
         $this->info('CI environment detected - running minimal setup...');
 
-        $envOk = file_exists(base_path('.env'));
+        $envOk = $this->ensureEnvFile();
         $keyOk = ! empty(config('app.key'));
 
         $this->components->task('Verifying .env', fn () => $envOk);
