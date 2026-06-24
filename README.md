@@ -1,5 +1,7 @@
 # saucebase/installer
 
+![Tests](https://github.com/saucebase-dev/installer/actions/workflows/php.yml/badge.svg)
+
 Dev-environment installer for [Saucebase](https://github.com/saucebase-dev/saucebase) applications.
 
 Provides two Artisan commands: `saucebase:install` bootstraps the entire dev environment (Docker, dependencies, database, frontend), and `saucebase:stack` switches the frontend framework after the environment is running.
