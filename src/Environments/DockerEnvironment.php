@@ -240,8 +240,8 @@ class DockerEnvironment implements Environment
 
         // Set missing or blank values; respect anything the user has already configured
         $defaults = [
-            'DB_HOST'     => 'mysql',
-            'DB_PORT'     => '3306',
+            'DB_HOST' => 'mysql',
+            'DB_PORT' => '3306',
             'DB_DATABASE' => $slug,
             'DB_USERNAME' => $slug,
             'DB_PASSWORD' => 'secret',

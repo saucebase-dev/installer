@@ -365,9 +365,15 @@ class InstallCommandTest extends TestCase
                     {
                         public function __construct(private object $spy) {}
 
-                        public function name(): string { return 'fake'; }
+                        public function name(): string
+                        {
+                            return 'fake';
+                        }
 
-                        public function label(): string { return 'Fake'; }
+                        public function label(): string
+                        {
+                            return 'Fake';
+                        }
 
                         public function missingPrerequisites(): array
                         {

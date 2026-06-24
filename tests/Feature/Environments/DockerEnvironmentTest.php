@@ -135,9 +135,15 @@ class DockerEnvironmentTest extends TestCase
     {
         $env = new class extends DockerEnvironment
         {
-            protected function commandExists(string $name): bool { return true; }
+            protected function commandExists(string $name): bool
+            {
+                return true;
+            }
 
-            protected function dockerComposeAvailable(): bool { return true; }
+            protected function dockerComposeAvailable(): bool
+            {
+                return true;
+            }
         };
 
         $this->assertSame([], $env->missingPrerequisites());
@@ -147,9 +153,15 @@ class DockerEnvironmentTest extends TestCase
     {
         $env = new class extends DockerEnvironment
         {
-            protected function commandExists(string $name): bool { return $name !== 'docker'; }
+            protected function commandExists(string $name): bool
+            {
+                return $name !== 'docker';
+            }
 
-            protected function dockerComposeAvailable(): bool { return true; }
+            protected function dockerComposeAvailable(): bool
+            {
+                return true;
+            }
         };
 
         $missing = $env->missingPrerequisites();
@@ -161,9 +173,15 @@ class DockerEnvironmentTest extends TestCase
     {
         $env = new class extends DockerEnvironment
         {
-            protected function commandExists(string $name): bool { return true; }
+            protected function commandExists(string $name): bool
+            {
+                return true;
+            }
 
-            protected function dockerComposeAvailable(): bool { return false; }
+            protected function dockerComposeAvailable(): bool
+            {
+                return false;
+            }
         };
 
         $missing = $env->missingPrerequisites();
@@ -175,9 +193,15 @@ class DockerEnvironmentTest extends TestCase
     {
         $env = new class extends DockerEnvironment
         {
-            protected function commandExists(string $name): bool { return $name !== 'npm'; }
+            protected function commandExists(string $name): bool
+            {
+                return $name !== 'npm';
+            }
 
-            protected function dockerComposeAvailable(): bool { return true; }
+            protected function dockerComposeAvailable(): bool
+            {
+                return true;
+            }
         };
 
         $missing = $env->missingPrerequisites();
@@ -189,9 +213,15 @@ class DockerEnvironmentTest extends TestCase
     {
         $env = new class extends DockerEnvironment
         {
-            protected function commandExists(string $name): bool { return false; }
+            protected function commandExists(string $name): bool
+            {
+                return false;
+            }
 
-            protected function dockerComposeAvailable(): bool { return false; }
+            protected function dockerComposeAvailable(): bool
+            {
+                return false;
+            }
         };
 
         $missing = $env->missingPrerequisites();
