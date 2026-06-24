@@ -25,6 +25,42 @@ class NativeEnvironmentTest extends TestCase
         $this->assertInstanceOf(Environment::class, new NativeEnvironment);
     }
 
+    // -------------------------------------------------------------------------
+    // missingPrerequisites
+    // -------------------------------------------------------------------------
+
+    public function test_missing_prerequisites_returns_empty_when_composer_present(): void
+    {
+        $env = new class extends NativeEnvironment
+        {
+            protected function commandExists(string $name): bool
+            {
+                return true;
+            }
+        };
+
+        $this->assertSame([], $env->missingPrerequisites());
+    }
+
+    public function test_missing_prerequisites_reports_composer_missing(): void
+    {
+        $env = new class extends NativeEnvironment
+        {
+            protected function commandExists(string $name): bool
+            {
+                return false;
+            }
+        };
+
+        $missing = $env->missingPrerequisites();
+        $this->assertCount(1, $missing);
+        $this->assertStringContainsString('composer', $missing[0]);
+    }
+
+    // -------------------------------------------------------------------------
+    // run()
+    // -------------------------------------------------------------------------
+
     public function test_run_delegates_to_install_and_returns_success(): void
     {
         $spy = (object) ['installCalled' => false];

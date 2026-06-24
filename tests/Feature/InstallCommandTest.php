@@ -2,6 +2,7 @@
 
 namespace Saucebase\Installer\Tests\Feature;
 
+use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Environments\Contracts\Environment;
@@ -195,7 +196,7 @@ class InstallCommandTest extends TestCase
                     return false;
                 }
 
-                protected function ensureEnvFile(): bool
+                public function ensureEnvFile(): bool
                 {
                     return true;
                 }
@@ -269,7 +270,7 @@ class InstallCommandTest extends TestCase
                     return new NativeEnvironment;
                 }
 
-                protected function ensureEnvFile(): bool
+                public function ensureEnvFile(): bool
                 {
                     return true;
                 }
@@ -310,7 +311,7 @@ class InstallCommandTest extends TestCase
                     return false;
                 }
 
-                protected function ensureEnvFile(): bool
+                public function ensureEnvFile(): bool
                 {
                     return true;
                 }
@@ -336,6 +337,65 @@ class InstallCommandTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // missingPrerequisites gate in handle()
+    // -------------------------------------------------------------------------
+
+    public function test_handle_returns_failure_and_skips_run_when_prerequisites_not_met(): void
+    {
+        $spy = (object) ['runCalled' => false];
+
+        app()->bind(InstallCommand::class, function () use ($spy) {
+            return new class($spy) extends InstallCommand
+            {
+                public function __construct(private object $spy)
+                {
+                    parent::__construct();
+                }
+
+                protected function isCI(): bool
+                {
+                    return false;
+                }
+
+                protected function resolveDriver(): Environment
+                {
+                    $spy = $this->spy;
+
+                    return new class($spy) implements Environment
+                    {
+                        public function __construct(private object $spy) {}
+
+                        public function name(): string
+                        {
+                            return 'fake';
+                        }
+
+                        public function label(): string
+                        {
+                            return 'Fake';
+                        }
+
+                        public function missingPrerequisites(): array
+                        {
+                            return ['fake-tool is not installed or not in PATH.'];
+                        }
+
+                        public function run(InstallCommand $command): int
+                        {
+                            $this->spy->runCalled = true;
+
+                            return Command::SUCCESS;
+                        }
+                    };
+                }
+            };
+        });
+
+        $this->artisan('saucebase:install vue --all-modules')->assertFailed();
+        $this->assertFalse($spy->runCalled, 'run() must not be called when prerequisites are not met');
+    }
+
+    // -------------------------------------------------------------------------
     // handleCIInstallation exit codes
     // -------------------------------------------------------------------------
 
@@ -348,10 +408,14 @@ class InstallCommandTest extends TestCase
                 {
                     return true;
                 }
+
+                public function ensureEnvFile(): bool
+                {
+                    return false;
+                }
             };
         });
 
-        // No .env in the Testbench app root — task will return false
         $this->artisan('saucebase:install vue')->assertFailed();
     }
 
@@ -368,7 +432,12 @@ class InstallCommandTest extends TestCase
             {
                 public object $spy;
 
-                protected function ensureEnvFile(): bool
+                protected function isCI(): bool
+                {
+                    return false;
+                }
+
+                public function ensureEnvFile(): bool
                 {
                     return true;
                 }

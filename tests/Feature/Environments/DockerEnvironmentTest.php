@@ -128,6 +128,110 @@ class DockerEnvironmentTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // missingPrerequisites
+    // -------------------------------------------------------------------------
+
+    public function test_missing_prerequisites_returns_empty_when_all_tools_present(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function commandExists(string $name): bool
+            {
+                return true;
+            }
+
+            protected function dockerComposeAvailable(): bool
+            {
+                return true;
+            }
+        };
+
+        $this->assertSame([], $env->missingPrerequisites());
+    }
+
+    public function test_missing_prerequisites_reports_docker_missing(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function commandExists(string $name): bool
+            {
+                return $name !== 'docker';
+            }
+
+            protected function dockerComposeAvailable(): bool
+            {
+                return true;
+            }
+        };
+
+        $missing = $env->missingPrerequisites();
+        $this->assertCount(1, $missing);
+        $this->assertStringContainsString('docker', $missing[0]);
+    }
+
+    public function test_missing_prerequisites_reports_docker_compose_missing(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function commandExists(string $name): bool
+            {
+                return true;
+            }
+
+            protected function dockerComposeAvailable(): bool
+            {
+                return false;
+            }
+        };
+
+        $missing = $env->missingPrerequisites();
+        $this->assertCount(1, $missing);
+        $this->assertStringContainsString('docker compose', $missing[0]);
+    }
+
+    public function test_missing_prerequisites_reports_npm_missing(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function commandExists(string $name): bool
+            {
+                return $name !== 'npm';
+            }
+
+            protected function dockerComposeAvailable(): bool
+            {
+                return true;
+            }
+        };
+
+        $missing = $env->missingPrerequisites();
+        $this->assertCount(1, $missing);
+        $this->assertStringContainsString('npm', $missing[0]);
+    }
+
+    public function test_missing_prerequisites_skips_compose_check_when_docker_itself_missing(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function commandExists(string $name): bool
+            {
+                return false;
+            }
+
+            protected function dockerComposeAvailable(): bool
+            {
+                return false;
+            }
+        };
+
+        $missing = $env->missingPrerequisites();
+        // docker + npm missing; docker compose check is skipped via elseif
+        $this->assertCount(2, $missing);
+        $this->assertStringContainsString('docker', $missing[0]);
+        $this->assertStringContainsString('npm', $missing[1]);
+    }
+
+    // -------------------------------------------------------------------------
     // run() failure propagation
     // -------------------------------------------------------------------------
 
@@ -142,6 +246,8 @@ class DockerEnvironmentTest extends TestCase
             protected function publishStubs(InstallCommand $command): void {}
 
             protected function generateSsl(InstallCommand $command): void {}
+
+            protected function setDockerEnvDefaults(InstallCommand $command): void {}
 
             protected function startDocker(InstallCommand $command): bool
             {
@@ -174,6 +280,8 @@ class DockerEnvironmentTest extends TestCase
 
             protected function generateSsl(InstallCommand $command): void {}
 
+            protected function setDockerEnvDefaults(InstallCommand $command): void {}
+
             protected function startDocker(InstallCommand $command): bool
             {
                 return true;
@@ -197,8 +305,141 @@ class DockerEnvironmentTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // applyDockerEnvDefaults
+    // -------------------------------------------------------------------------
+
+    public function test_replaces_sqlite_connection_with_mysql(): void
+    {
+        $result = $this->applyDefaults("DB_CONNECTION=sqlite\n");
+
+        $this->assertStringContainsString('DB_CONNECTION=mysql', $result);
+        $this->assertStringNotContainsString('DB_CONNECTION=sqlite', $result);
+    }
+
+    public function test_leaves_mysql_connection_unchanged(): void
+    {
+        $input = "DB_CONNECTION=mysql\nDB_HOST=mysql\nDB_PORT=3306\nDB_DATABASE=myapp\nDB_USERNAME=myapp\nDB_PASSWORD=secret\nMAIL_MAILER=smtp\n";
+        $result = $this->applyDefaults($input);
+
+        $this->assertSame($input, $result);
+    }
+
+    public function test_appends_db_connection_when_missing(): void
+    {
+        $result = $this->applyDefaults("APP_NAME=Test\n");
+
+        $this->assertStringContainsString('DB_CONNECTION=mysql', $result);
+    }
+
+    public function test_uses_app_slug_for_db_database_and_username(): void
+    {
+        $result = $this->applyDefaults("APP_SLUG=myproject\nDB_CONNECTION=sqlite\n");
+
+        $this->assertStringContainsString('DB_DATABASE=myproject', $result);
+        $this->assertStringContainsString('DB_USERNAME=myproject', $result);
+    }
+
+    public function test_falls_back_to_saucebase_slug_when_app_slug_missing(): void
+    {
+        $result = $this->applyDefaults("DB_CONNECTION=sqlite\n");
+
+        $this->assertStringContainsString('DB_DATABASE=saucebase', $result);
+        $this->assertStringContainsString('DB_USERNAME=saucebase', $result);
+    }
+
+    public function test_sets_blank_db_vars_to_defaults(): void
+    {
+        $input = "DB_CONNECTION=sqlite\nDB_HOST=\nDB_PORT=\nDB_DATABASE=\nDB_USERNAME=\nDB_PASSWORD=\n";
+        $result = $this->applyDefaults($input);
+
+        $this->assertStringContainsString('DB_HOST=mysql', $result);
+        $this->assertStringContainsString('DB_PORT=3306', $result);
+        $this->assertStringContainsString('DB_PASSWORD=secret', $result);
+    }
+
+    public function test_does_not_overwrite_existing_db_values(): void
+    {
+        $input = "DB_CONNECTION=mysql\nDB_HOST=custom-host\nDB_PORT=3307\nDB_DATABASE=mydb\nDB_USERNAME=myuser\nDB_PASSWORD=mypass\n";
+        $result = $this->applyDefaults($input);
+
+        $this->assertStringContainsString('DB_HOST=custom-host', $result);
+        $this->assertStringContainsString('DB_PORT=3307', $result);
+        $this->assertStringContainsString('DB_DATABASE=mydb', $result);
+        $this->assertStringContainsString('DB_USERNAME=myuser', $result);
+        $this->assertStringContainsString('DB_PASSWORD=mypass', $result);
+    }
+
+    public function test_appends_missing_db_vars(): void
+    {
+        $result = $this->applyDefaults("DB_CONNECTION=sqlite\n");
+
+        $this->assertStringContainsString('DB_HOST=mysql', $result);
+        $this->assertStringContainsString('DB_PORT=3306', $result);
+        $this->assertStringContainsString('DB_PASSWORD=secret', $result);
+    }
+
+    public function test_replaces_log_mailer_with_smtp(): void
+    {
+        $result = $this->applyDefaults("MAIL_MAILER=log\n");
+
+        $this->assertStringContainsString('MAIL_MAILER=smtp', $result);
+        $this->assertStringNotContainsString('MAIL_MAILER=log', $result);
+    }
+
+    public function test_leaves_smtp_mailer_unchanged(): void
+    {
+        $input = "MAIL_MAILER=smtp\n";
+        $result = $this->applyDefaults($input);
+
+        $this->assertStringContainsString('MAIL_MAILER=smtp', $result);
+    }
+
+    public function test_appends_mail_mailer_when_missing(): void
+    {
+        $result = $this->applyDefaults("APP_NAME=Test\n");
+
+        $this->assertStringContainsString('MAIL_MAILER=smtp', $result);
+    }
+
+    public function test_real_env_example_pattern_produces_valid_docker_env(): void
+    {
+        $input = implode("\n", [
+            'APP_SLUG=acme',
+            'DB_CONNECTION=sqlite',
+            '# DB_HOST=localhost',
+            '# DB_DATABASE=${APP_SLUG}',
+            '# DB_USERNAME=${APP_SLUG}',
+            '# DB_PASSWORD=secret',
+            'MAIL_MAILER=log',
+            '',
+        ]);
+
+        $result = $this->applyDefaults($input);
+
+        $this->assertStringContainsString('DB_CONNECTION=mysql', $result);
+        $this->assertStringContainsString('DB_DATABASE=acme', $result);
+        $this->assertStringContainsString('DB_USERNAME=acme', $result);
+        $this->assertStringContainsString('DB_HOST=mysql', $result);
+        $this->assertStringContainsString('DB_PASSWORD=secret', $result);
+        $this->assertStringContainsString('MAIL_MAILER=smtp', $result);
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    private function applyDefaults(string $env): string
+    {
+        $exposed = new class extends DockerEnvironment
+        {
+            public function applyDockerEnvDefaults(string $env): string
+            {
+                return parent::applyDockerEnvDefaults($env);
+            }
+        };
+
+        return $exposed->applyDockerEnvDefaults($env);
+    }
 
     /**
      * @param  string[]  $modules
