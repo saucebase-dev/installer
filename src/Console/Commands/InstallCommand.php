@@ -342,16 +342,16 @@ class InstallCommand extends Command
             return $process->isSuccessful();
         });
 
+        $this->components->task('Running module migrations', function () {
+            $process = new Process([PHP_BINARY, base_path('artisan'), 'migrate', '--force']);
+            $process->setTimeout(300);
+            $process->run();
+
+            return $process->isSuccessful();
+        });
+
         foreach ($selected as $package) {
             $name = Str::after($package, '/');
-
-            $this->components->task("Migrating {$name}", function () use ($name) {
-                $process = new Process([PHP_BINARY, base_path('artisan'), 'modules:migrate', "--module={$name}", '--force']);
-                $process->setTimeout(120);
-                $process->run();
-
-                return $process->isSuccessful();
-            });
 
             $this->components->task("Seeding {$name}", function () use ($name) {
                 $process = new Process([PHP_BINARY, base_path('artisan'), 'db:seed', "--module={$name}", '--force']);

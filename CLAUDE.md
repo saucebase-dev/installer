@@ -35,7 +35,7 @@ composer install
 2. `generateApplicationKey()` — skips if `APP_KEY` already set
 3. `setupDatabase()` — runs `migrate` (or `migrate:fresh` with `--fresh`) with seed
 4. `runStack()` — calls `saucebase:stack` with the selected framework
-5. `setupModules()` — fetches available modules from Packagist, `composer require`s selected ones, then: `dump-autoload` → `applyModulePatches()` → `modules:sync` → per-module `modules:migrate` + `modules:seed`
+5. `setupModules()` — fetches available modules from Packagist, batches all selected into one `composer require` call, then: `applyModulePatches()` → `modules:sync` → `migrate --force` (auto-discovered via InterNACHI/modular) → `db:seed --module={name} --force` per module
 6. `createStorageLink()` + `clearCaches()`
 
 **Docker flow** (`DockerEnvironment::run()`):
@@ -48,7 +48,7 @@ composer install
 7. `startDocker()` — `docker compose restart` + `docker compose up -d --wait --build` (30 min timeout, streaming output)
 8. `runComposerInContainer()` — `composer install` in the `app` container
 9. `generateAppKey()` → `runMigrations()` → `runStack()` — artisan steps in the container via `execInContainer()`
-10. `installModules()` — per module: `composer require` in container → `applyModulePatches()` on host → `modules:sync` → `modules:migrate` → `modules:seed` in container
+10. `installModules()` — single batched `composer require` for all modules in container → `applyModulePatches()` on host → `modules:sync` → `migrate --force` → `db:seed --module={name} --force` per module in container
 11. `createStorageLink()` + `clearCaches()` in container
 12. `reloadDocker()` — `docker compose up -d --wait`
 
