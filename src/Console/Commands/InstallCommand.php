@@ -399,6 +399,7 @@ class InstallCommand extends Command
 
                     if (! $check->isSuccessful()) {
                         $this->warn("Skipping {$label}: already applied or conflicts.");
+
                         continue;
                     }
 
