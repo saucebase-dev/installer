@@ -157,7 +157,7 @@ class InstallCommand extends Command
      * @param  string[]  $packages
      * @return string[]
      */
-    protected function filterModulesByFramework(array $packages, string $framework): array
+    public function filterModulesByFramework(array $packages, string $framework): array
     {
         return array_values(array_filter(
             $packages,
@@ -346,7 +346,10 @@ class InstallCommand extends Command
             return $process->isSuccessful();
         });
 
-        // Phase 3: sync module configs, then migrate all in one pass
+        // Phase 2.5: apply any patches the modules ship for the host app
+        $this->applyModulePatches($selected);
+
+        // Phase 3: sync module configs, then migrate + seed each module individually
         $this->components->task('Syncing modules', function () {
             $process = new Process([PHP_BINARY, base_path('artisan'), 'modules:sync']);
             $process->setTimeout(30);
@@ -355,19 +358,69 @@ class InstallCommand extends Command
             return $process->isSuccessful();
         });
 
-        $this->components->task('Running module migrations', function () {
-            $process = new Process([PHP_BINARY, base_path('artisan'), 'migrate', '--seed', '--force']);
-            $process->setTimeout(120);
-            $process->run();
+        foreach ($selected as $package) {
+            $name = Str::after($package, '/');
 
-            return $process->isSuccessful();
-        });
+            $this->components->task("Migrating {$name}", function () use ($name) {
+                $process = new Process([PHP_BINARY, base_path('artisan'), 'modules:migrate', "--module={$name}", '--force']);
+                $process->setTimeout(120);
+                $process->run();
+
+                return $process->isSuccessful();
+            });
+
+            $this->components->task("Seeding {$name}", function () use ($name) {
+                $process = new Process([PHP_BINARY, base_path('artisan'), 'modules:seed', "--module={$name}"]);
+                $process->setTimeout(60);
+                $process->run();
+
+                return $process->isSuccessful();
+            });
+        }
+    }
+
+    public function applyModulePatches(array $modules): void
+    {
+        foreach ($modules as $package) {
+            $name = Str::after($package, '/');
+
+            $dirs = array_filter([
+                base_path("vendor/saucebase/{$name}/patches"),
+                base_path("modules/{$name}/patches"),
+            ], 'is_dir');
+
+            foreach ($dirs as $dir) {
+                foreach (glob("{$dir}/*.patch") ?: [] as $patch) {
+                    $label = basename($patch);
+
+                    $check = new Process(['git', 'apply', '--check', '--whitespace=nowarn', $patch]);
+                    $check->setWorkingDirectory(base_path());
+                    $check->run();
+
+                    if (! $check->isSuccessful()) {
+                        $this->warn("Skipping {$label}: already applied or conflicts.");
+
+                        continue;
+                    }
+
+                    $apply = new Process(['git', 'apply', '--whitespace=nowarn', $patch]);
+                    $apply->setWorkingDirectory(base_path());
+                    $apply->run();
+
+                    if ($apply->isSuccessful()) {
+                        $this->info("Applied patch: {$label}");
+                    } else {
+                        $this->warn("Failed to apply {$label}: ".$apply->getErrorOutput());
+                    }
+                }
+            }
+        }
     }
 
     /**
      * @return string[]
      */
-    protected function fetchAvailableModules(): array
+    public function fetchAvailableModules(): array
     {
         if (! empty($this->availableModules)) {
             return $this->availableModules;
@@ -495,11 +548,7 @@ class InstallCommand extends Command
         $this->newLine();
         $this->line('Next steps:');
         $this->line('  1. Ensure <fg=yellow>APP_URL</> is set correctly in <fg=yellow>.env</>');
-        if ($this->option('driver') === 'docker') {
-            $this->line('  2. Start the dev server: <fg=yellow>npm run dev</>');
-        } else {
-            $this->line('  2. Start the dev server: <fg=yellow>php artisan serve or composer dev</>');
-        }
+        $this->line('  2. Start the dev server: <fg=yellow>'.($this->option('driver') === 'docker' ? 'npm run dev' : 'php artisan serve or composer dev').'</>');
         $this->line('  3. Open your app in the browser: <fg=yellow>'.config('app.url').'</>');
         $this->newLine();
         $this->line('Learn more: <fg=cyan>https://github.com/saucebase-dev/saucebase</>');

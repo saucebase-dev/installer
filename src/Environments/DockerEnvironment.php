@@ -3,6 +3,7 @@
 namespace Saucebase\Installer\Environments;
 
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Environments\Contracts\Environment;
 use Symfony\Component\Process\Process;
@@ -68,7 +69,18 @@ class DockerEnvironment implements Environment
             return InstallCommand::FAILURE;
         }
 
-        $this->runInstallInContainer($command);
+        if (! $this->generateAppKey($command)) {
+            return InstallCommand::FAILURE;
+        }
+
+        if (! $this->runMigrations($command)) {
+            return InstallCommand::FAILURE;
+        }
+
+        $this->runStack($command);
+        $this->installModules($command);
+        $this->createStorageLink($command);
+        $this->clearCaches($command);
         $this->reloadDocker($command);
 
         return InstallCommand::SUCCESS;
@@ -170,14 +182,112 @@ class DockerEnvironment implements Environment
         return $process->isSuccessful();
     }
 
-    protected function runInstallInContainer(InstallCommand $command): void
+    protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
     {
-        $args = $this->buildContainerArgs($command);
-        $command->info('Running installer in container...');
-
         $process = new Process(array_merge(['docker', 'compose', 'exec', '-T', 'app'], $args));
-        $process->setTimeout(300);
+        $process->setTimeout($timeout);
         $process->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
+
+        return $process->isSuccessful();
+    }
+
+    protected function generateAppKey(InstallCommand $command): bool
+    {
+        $command->info('Generating application key...');
+
+        return $this->execInContainer($command, ['php', 'artisan', 'key:generate', '--force']);
+    }
+
+    protected function runMigrations(InstallCommand $command): bool
+    {
+        $fresh = $command->option('fresh');
+        $command->info($fresh ? 'Running fresh migrations...' : 'Running migrations...');
+
+        return $this->execInContainer(
+            $command,
+            ['php', 'artisan', $fresh ? 'migrate:fresh' : 'migrate', '--seed', '--force'],
+            timeout: 300,
+        );
+    }
+
+    protected function runStack(InstallCommand $command): void
+    {
+        if (! $stack = $command->getSelectedStack()) {
+            return;
+        }
+
+        $command->info("Setting up {$stack} stack...");
+        $args = ['php', 'artisan', 'saucebase:stack', $stack];
+
+        if ($command->option('dev')) {
+            $args[] = '--dev';
+        }
+
+        $this->execInContainer($command, $args);
+    }
+
+    protected function installModules(InstallCommand $command): void
+    {
+        $modules = $this->resolveModules($command);
+
+        if (empty($modules)) {
+            return;
+        }
+
+        $command->info('Installing modules...');
+
+        $anyFailed = false;
+        foreach ($modules as $package) {
+            $ok = $this->execInContainer($command, ['composer', 'require', $package, '--no-interaction'], timeout: 300);
+
+            if (! $ok) {
+                $command->warn("Failed to require {$package} — skipping.");
+                $anyFailed = true;
+            }
+        }
+
+        if ($anyFailed) {
+            return;
+        }
+
+        $this->execInContainer($command, ['composer', 'dump-autoload', '--no-interaction']);
+        $command->applyModulePatches($modules);
+        $this->execInContainer($command, ['php', 'artisan', 'modules:sync']);
+
+        foreach ($modules as $package) {
+            $name = Str::after($package, '/');
+            $this->execInContainer($command, ['php', 'artisan', 'modules:migrate', "--module={$name}", '--force'], timeout: 120);
+            $this->execInContainer($command, ['php', 'artisan', 'modules:seed', "--module={$name}"]);
+        }
+    }
+
+    protected function resolveModules(InstallCommand $command): array
+    {
+        if ($command->option('all-modules')) {
+            $available = $command->fetchAvailableModules();
+
+            return $command->getSelectedStack()
+                ? $command->filterModulesByFramework($available, $command->getSelectedStack())
+                : $available;
+        }
+
+        if ($raw = $command->option('modules')) {
+            return array_values(array_filter(array_map('trim', explode(',', $raw))));
+        }
+
+        return $command->getSelectedModules();
+    }
+
+    protected function createStorageLink(InstallCommand $command): void
+    {
+        $command->info('Creating storage link...');
+        $this->execInContainer($command, ['php', 'artisan', 'storage:link']);
+    }
+
+    protected function clearCaches(InstallCommand $command): void
+    {
+        $command->info('Clearing caches...');
+        $this->execInContainer($command, ['php', 'artisan', 'optimize:clear']);
     }
 
     protected function reloadDocker(InstallCommand $command): void
@@ -186,30 +296,6 @@ class DockerEnvironment implements Environment
         $process = new Process(['docker', 'compose', 'up', '-d', '--wait']);
         $process->setTimeout(60);
         $process->run();
-    }
-
-    /** @return string[] */
-    public function buildContainerArgs(InstallCommand $command): array
-    {
-        $args = ['php', 'artisan', 'saucebase:install', '--driver=native', '--force', '--no-logo'];
-
-        if ($stack = $command->getSelectedStack()) {
-            $args[] = $stack;
-        }
-
-        if ($modules = $command->option('modules')) {
-            $args[] = '--modules='.$modules;
-        } else {
-            $args[] = '--modules='.implode(',', $command->getSelectedModules());
-        }
-
-        foreach (['fresh', 'dev', 'all-modules'] as $opt) {
-            if ($command->option($opt)) {
-                $args[] = "--{$opt}";
-            }
-        }
-
-        return $args;
     }
 
     protected function setDockerEnvDefaults(InstallCommand $command): void
