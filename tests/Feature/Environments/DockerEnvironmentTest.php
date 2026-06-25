@@ -249,6 +249,70 @@ class DockerEnvironmentTest extends TestCase
     // run() failure propagation
     // -------------------------------------------------------------------------
 
+    public function test_run_returns_failure_when_ssl_requested_but_mkcert_missing(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function promptForSsl(InstallCommand $command): void
+            {
+                $this->ssl = true;
+            }
+
+            protected function commandExists(string $name): bool
+            {
+                return $name !== 'mkcert';
+            }
+
+            protected function dockerComposeAvailable(): bool
+            {
+                return true;
+            }
+        };
+
+        $result = $env->run(new FakeInstallCommand(null, [], []));
+
+        $this->assertSame(Command::FAILURE, $result);
+    }
+
+    public function test_run_skips_mkcert_check_when_ssl_disabled(): void
+    {
+        $spy = (object) ['publishCalled' => false];
+
+        $env = new class($spy) extends DockerEnvironment
+        {
+            public function __construct(private object $spy) {}
+
+            protected function promptForSsl(InstallCommand $command): void
+            {
+                $this->ssl = false;
+            }
+
+            protected function commandExists(string $name): bool
+            {
+                return false; // mkcert missing — but ssl is off so should not matter
+            }
+
+            protected function publishStubs(InstallCommand $command): void
+            {
+                $this->spy->publishCalled = true;
+            }
+
+            protected function generateSsl(InstallCommand $command): void {}
+
+            protected function setDockerEnvDefaults(InstallCommand $command): void {}
+
+            protected function startDocker(InstallCommand $command): bool
+            {
+                return false; // stop here — we just need to confirm it passed the mkcert gate
+            }
+        };
+
+        $result = $env->run(new FakeInstallCommand(null, [], []));
+
+        $this->assertSame(Command::FAILURE, $result); // failed at startDocker, not mkcert
+        $this->assertTrue($spy->publishCalled, 'publishStubs must be reached when ssl is disabled');
+    }
+
     public function test_run_returns_failure_and_skips_composer_when_docker_fails_to_start(): void
     {
         $spy = (object) ['composerCalled' => false];
@@ -256,6 +320,8 @@ class DockerEnvironmentTest extends TestCase
         $env = new class($spy) extends DockerEnvironment
         {
             public function __construct(private object $spy) {}
+
+            protected function promptForSsl(InstallCommand $command): void {}
 
             protected function publishStubs(InstallCommand $command): void {}
 
@@ -289,6 +355,8 @@ class DockerEnvironmentTest extends TestCase
         $env = new class($spy) extends DockerEnvironment
         {
             public function __construct(private object $spy) {}
+
+            protected function promptForSsl(InstallCommand $command): void {}
 
             protected function publishStubs(InstallCommand $command): void {}
 
@@ -332,7 +400,7 @@ class DockerEnvironmentTest extends TestCase
 
     public function test_leaves_mysql_connection_unchanged(): void
     {
-        $input = "DB_CONNECTION=mysql\nDB_HOST=mysql\nDB_PORT=3306\nDB_DATABASE=myapp\nDB_USERNAME=myapp\nDB_PASSWORD=secret\nMAIL_MAILER=smtp\n";
+        $input = "APP_URL=https://localhost\nDB_CONNECTION=mysql\nDB_HOST=mysql\nDB_PORT=3306\nDB_DATABASE=myapp\nDB_USERNAME=myapp\nDB_PASSWORD=secret\nMAIL_MAILER=smtp\n";
         $result = $this->applyDefaults($input);
 
         $this->assertSame($input, $result);
@@ -415,10 +483,57 @@ class DockerEnvironmentTest extends TestCase
         $this->assertStringContainsString('MAIL_MAILER=smtp', $result);
     }
 
+    public function test_sets_https_url_when_ssl_enabled(): void
+    {
+        $result = $this->applyDefaults("APP_URL=http://localhost\n", ssl: true);
+
+        $this->assertStringContainsString('APP_URL=https://localhost', $result);
+        $this->assertStringNotContainsString('APP_URL=http://localhost', $result);
+    }
+
+    public function test_sets_http_url_when_ssl_disabled(): void
+    {
+        $result = $this->applyDefaults("APP_URL=https://localhost\n", ssl: false);
+
+        $this->assertStringContainsString('APP_URL=http://localhost', $result);
+        $this->assertStringNotContainsString('APP_URL=https://localhost', $result);
+    }
+
+    public function test_replaces_http_localhost_with_port_when_ssl_enabled(): void
+    {
+        $result = $this->applyDefaults("APP_URL=http://localhost:8000\n", ssl: true);
+
+        $this->assertStringContainsString('APP_URL=https://localhost', $result);
+        $this->assertStringNotContainsString('http://localhost:8000', $result);
+    }
+
+    public function test_appends_https_url_when_missing_and_ssl_enabled(): void
+    {
+        $result = $this->applyDefaults("APP_NAME=Test\n", ssl: true);
+
+        $this->assertStringContainsString('APP_URL=https://localhost', $result);
+    }
+
+    public function test_appends_http_url_when_missing_and_ssl_disabled(): void
+    {
+        $result = $this->applyDefaults("APP_NAME=Test\n", ssl: false);
+
+        $this->assertStringContainsString('APP_URL=http://localhost', $result);
+    }
+
+    public function test_leaves_custom_app_url_unchanged_regardless_of_ssl(): void
+    {
+        $input = "APP_URL=https://myapp.test\n";
+
+        $this->assertStringContainsString('APP_URL=https://myapp.test', $this->applyDefaults($input, ssl: true));
+        $this->assertStringContainsString('APP_URL=https://myapp.test', $this->applyDefaults($input, ssl: false));
+    }
+
     public function test_real_env_example_pattern_produces_valid_docker_env(): void
     {
         $input = implode("\n", [
             'APP_SLUG=acme',
+            'APP_URL=http://localhost',
             'DB_CONNECTION=sqlite',
             '# DB_HOST=localhost',
             '# DB_DATABASE=${APP_SLUG}',
@@ -428,7 +543,7 @@ class DockerEnvironmentTest extends TestCase
             '',
         ]);
 
-        $result = $this->applyDefaults($input);
+        $result = $this->applyDefaults($input, ssl: true);
 
         $this->assertStringContainsString('DB_CONNECTION=mysql', $result);
         $this->assertStringContainsString('DB_DATABASE=acme', $result);
@@ -436,23 +551,24 @@ class DockerEnvironmentTest extends TestCase
         $this->assertStringContainsString('DB_HOST=mysql', $result);
         $this->assertStringContainsString('DB_PASSWORD=secret', $result);
         $this->assertStringContainsString('MAIL_MAILER=smtp', $result);
+        $this->assertStringContainsString('APP_URL=https://localhost', $result);
     }
 
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
-    private function applyDefaults(string $env): string
+    private function applyDefaults(string $env, bool $ssl = true): string
     {
         $exposed = new class extends DockerEnvironment
         {
-            public function applyDockerEnvDefaults(string $env): string
+            public function applyDockerEnvDefaults(string $env, bool $ssl = true): string
             {
-                return parent::applyDockerEnvDefaults($env);
+                return parent::applyDockerEnvDefaults($env, $ssl);
             }
         };
 
-        return $exposed->applyDockerEnvDefaults($env);
+        return $exposed->applyDockerEnvDefaults($env, $ssl);
     }
 
     /**
@@ -508,4 +624,12 @@ class FakeInstallCommand extends InstallCommand
 
         return $this->fakeOptions;
     }
+
+    public function error($string, $verbosity = null): void {}
+
+    public function line($string, $style = null, $verbosity = null): void {}
+
+    public function info($string, $verbosity = null): void {}
+
+    public function warn($string, $verbosity = null): void {}
 }
