@@ -7,8 +7,12 @@ use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Environments\Contracts\Environment;
 use Symfony\Component\Process\Process;
 
+use function Laravel\Prompts\confirm;
+
 class DockerEnvironment implements Environment
 {
+    protected bool $ssl = true;
+
     public function name(): string
     {
         return 'docker';
@@ -38,6 +42,15 @@ class DockerEnvironment implements Environment
 
     public function run(InstallCommand $command): int
     {
+        $this->promptForSsl($command);
+
+        if ($this->ssl && ! $this->commandExists('mkcert')) {
+            $command->error('mkcert is required for SSL. Install it with: brew install mkcert');
+            $command->line('Then re-run: php artisan saucebase:install --driver=docker');
+
+            return InstallCommand::FAILURE;
+        }
+
         $this->publishStubs($command);
         $this->generateSsl($command);
 
@@ -61,14 +74,36 @@ class DockerEnvironment implements Environment
         return InstallCommand::SUCCESS;
     }
 
+    protected function promptForSsl(InstallCommand $command): void
+    {
+        $this->ssl = $command->option('force')
+            ? true
+            : confirm(
+                label: 'Enable HTTPS with SSL?',
+                default: true,
+                hint: 'Requires mkcert. Install with: brew install mkcert',
+            );
+    }
+
     protected function publishStubs(InstallCommand $command): void
     {
         $command->info('Publishing Docker stubs...');
         Artisan::call('vendor:publish', ['--tag' => 'saucebase-docker', '--no-interaction' => true]);
+
+        if (! $this->ssl) {
+            copy(
+                __DIR__.'/../../../stubs/docker/docker/nginx-no-ssl.conf',
+                base_path('docker/nginx.conf'),
+            );
+        }
     }
 
     protected function generateSsl(InstallCommand $command): void
     {
+        if (! $this->ssl) {
+            return;
+        }
+
         $certFile = base_path('docker/ssl/app.pem');
         $keyFile = base_path('docker/ssl/app.key.pem');
 
@@ -186,7 +221,7 @@ class DockerEnvironment implements Environment
             return;
         }
 
-        $modified = $this->applyDockerEnvDefaults($original);
+        $modified = $this->applyDockerEnvDefaults($original, $this->ssl);
 
         if ($modified !== $original) {
             file_put_contents($path, $modified);
@@ -194,7 +229,7 @@ class DockerEnvironment implements Environment
         }
     }
 
-    protected function applyDockerEnvDefaults(string $env): string
+    protected function applyDockerEnvDefaults(string $env, bool $ssl = true): string
     {
         $slug = 'saucebase';
         if (preg_match('/^APP_SLUG=([^\s]+)/m', $env, $m)) {
@@ -213,6 +248,17 @@ class DockerEnvironment implements Environment
             $env = preg_replace('/^MAIL_MAILER=.*$/m', 'MAIL_MAILER=smtp', $env);
         } elseif (! preg_match('/^MAIL_MAILER=/m', $env)) {
             $env .= "\nMAIL_MAILER=smtp";
+        }
+
+        // Set APP_URL to match the chosen SSL mode
+        $defaultUrl = $ssl ? 'https://localhost' : 'http://localhost';
+        if (preg_match('/^APP_URL=(.*)$/m', $env, $m)) {
+            $url = trim($m[1], "\"'");
+            if (preg_match('#^https?://localhost(:\d+)?/?$#', $url)) {
+                $env = preg_replace('/^APP_URL=.*$/m', "APP_URL={$defaultUrl}", $env);
+            }
+        } else {
+            $env .= "\nAPP_URL={$defaultUrl}";
         }
 
         // Set missing or blank values; respect anything the user has already configured
