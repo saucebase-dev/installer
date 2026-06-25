@@ -236,28 +236,25 @@ class DockerEnvironment implements Environment
 
         $command->info('Installing modules...');
 
-        $anyFailed = false;
-        foreach ($modules as $package) {
-            $ok = $this->execInContainer($command, ['composer', 'require', $package, '--no-interaction'], timeout: 300);
+        $ok = $this->execInContainer(
+            $command,
+            ['composer', 'require', ...$modules, '--no-interaction'],
+            timeout: 300,
+        );
 
-            if (! $ok) {
-                $command->warn("Failed to require {$package} — skipping.");
-                $anyFailed = true;
-            }
-        }
+        if (! $ok) {
+            $command->warn('Failed to install one or more modules — skipping patches, sync, and migrations.');
 
-        if ($anyFailed) {
             return;
         }
 
-        $this->execInContainer($command, ['composer', 'dump-autoload', '--no-interaction']);
         $command->applyModulePatches($modules);
         $this->execInContainer($command, ['php', 'artisan', 'modules:sync']);
 
         foreach ($modules as $package) {
             $name = Str::after($package, '/');
             $this->execInContainer($command, ['php', 'artisan', 'modules:migrate', "--module={$name}", '--force'], timeout: 120);
-            $this->execInContainer($command, ['php', 'artisan', 'modules:seed', "--module={$name}"]);
+            $this->execInContainer($command, ['php', 'artisan', 'db:seed', "--module={$name}", '--force']);
         }
     }
 
