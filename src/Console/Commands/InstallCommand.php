@@ -495,7 +495,7 @@ class InstallCommand extends Command
         $this->newLine();
         $this->line('Next steps:');
         $this->line('  1. Ensure <fg=yellow>APP_URL</> is set correctly in <fg=yellow>.env</>');
-        if($this->option('driver') === 'docker') {
+        if ($this->option('driver') === 'docker') {
             $this->line('  2. Start the dev server: <fg=yellow>npm run dev</>');
         } else {
             $this->line('  2. Start the dev server: <fg=yellow>php artisan serve or composer dev</>');
