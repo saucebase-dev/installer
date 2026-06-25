@@ -1,6 +1,9 @@
 # saucebase/installer
 
 ![Tests](https://github.com/saucebase-dev/installer/actions/workflows/php.yml/badge.svg)
+![PHP](https://img.shields.io/badge/PHP-%5E8.4-777BB4?logo=php&logoColor=white)
+![Laravel](https://img.shields.io/badge/Laravel-13-FF2D20?logo=laravel&logoColor=white)
+[![Saucebase](https://img.shields.io/packagist/v/saucebase/saucebase?color=5455c4&label=saucebase%2Fsaucebase)](https://packagist.org/packages/saucebase/saucebase)
 
 Dev-environment installer for [Saucebase](https://github.com/saucebase-dev/saucebase) applications.
 
@@ -27,15 +30,32 @@ Bootstraps a new Saucebase dev environment from scratch.
 php artisan saucebase:install
 ```
 
-Prompts for the frontend stack (Vue or React) and the environment driver (Docker or native PHP), then runs the full setup sequence:
+Prompts for the frontend stack (Vue or React) and the environment driver (Docker or native PHP), then runs the full setup sequence.
 
-1. Publishes Docker config files and generates SSL certificates (Docker driver only)
-2. Starts `docker compose` and installs PHP dependencies inside the container
-3. Copies `.env.example` → `.env` and generates `APP_KEY`
-4. Runs migrations and seeds the database
-5. Wires up the selected frontend stack
-6. Installs any selected modules
-7. Creates the storage symlink and clears caches
+**Docker driver** (`--driver=docker`):
+
+1. Prompts whether to enable HTTPS via SSL (requires [mkcert](https://github.com/FiloSottile/mkcert))
+2. Publishes Docker config files (`docker-compose.yml`, `Dockerfile`, `nginx.conf`, etc.)
+3. Generates SSL certificates with mkcert (if SSL enabled)
+4. Patches `.env` with Docker-appropriate defaults — MySQL credentials, `MAIL_MAILER=smtp` for Mailpit, and `APP_URL` matching the SSL choice
+5. Starts `docker compose` and installs PHP dependencies inside the container
+6. Generates `APP_KEY`, runs migrations, wires up the frontend stack
+7. Installs any selected modules (`composer require` → patches → `modules:sync` → `modules:migrate` → `modules:seed` per module)
+8. Creates the storage symlink and clears caches
+
+**Native driver** (`--driver=native`):
+
+1. Copies `.env.example` → `.env` and generates `APP_KEY`
+2. Runs migrations and seeds the database
+3. Wires up the selected frontend stack
+4. Installs any selected modules (same patch + migrate + seed flow as Docker)
+5. Creates the storage symlink and clears caches
+
+**Docker prerequisites**
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine with Compose plugin
+- [mkcert](https://github.com/FiloSottile/mkcert) — only if you choose SSL (`brew install mkcert`)
+- npm
 
 **Options**
 
@@ -45,14 +65,14 @@ Prompts for the frontend stack (Vue or React) and the environment driver (Docker
 | `--driver=docker\|native` | Environment driver (skips the prompt) |
 | `--fresh` | Run `migrate:fresh` instead of `migrate` (destructive — wipes all data) |
 | `--all-modules` | Install every available module for the selected stack without prompting |
-| `--modules=auth,billing` | Install specific modules by name (comma-separated) |
+| `--modules=auth,billing` | Install specific modules by name (comma-separated, short or full package name) |
 | `--dev` | Contributor mode — skips module installation |
-| `--force` | Skip confirmations |
-| `--no-logo` | Suppress the welcome banner (passed automatically when running inside a container) |
+| `--force` | Skip confirmations (Docker driver defaults to SSL when forced) |
+| `--no-logo` | Suppress the welcome banner |
 
 **Examples**
 
-Fully interactive — prompts for stack and driver:
+Fully interactive — prompts for stack, driver, SSL, and modules:
 ```bash
 php artisan saucebase:install
 ```
@@ -65,11 +85,6 @@ php artisan saucebase:install vue --driver=docker --fresh --all-modules
 React + native PHP, specific modules only:
 ```bash
 php artisan saucebase:install react --driver=native --modules=auth,billing
-```
-
-Re-run inside an already-running container (skips Docker steps):
-```bash
-php artisan saucebase:install vue --driver=native --force
 ```
 
 ---
