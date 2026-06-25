@@ -57,7 +57,6 @@ class DockerEnvironment implements Environment
 
         $this->runInstallInContainer($command);
         $this->reloadDocker($command);
-        $this->runNpmOnHost($command);
 
         return InstallCommand::SUCCESS;
     }
@@ -152,29 +151,6 @@ class DockerEnvironment implements Environment
         $process = new Process(['docker', 'compose', 'up', '-d', '--wait']);
         $process->setTimeout(60);
         $process->run();
-    }
-
-    protected function runNpmOnHost(InstallCommand $command): void
-    {
-        $command->info('Installing frontend dependencies...');
-        $install = new Process(['npm', 'install'], base_path());
-        $install->setTimeout(300);
-        $install->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
-
-        if (! $install->isSuccessful()) {
-            $command->warn('npm install failed. Run manually: npm install');
-
-            return;
-        }
-
-        $command->info('Building frontend assets...');
-        $build = new Process(['npm', 'run', 'build'], base_path());
-        $build->setTimeout(300);
-        $build->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
-
-        if (! $build->isSuccessful()) {
-            $command->warn('npm run build failed. Run manually: npm run build');
-        }
     }
 
     /** @return string[] */

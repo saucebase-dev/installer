@@ -132,7 +132,7 @@ class StackCommand extends Command
         $this->skipGeneratedFiles($framework);
         $this->runNpmInstall();
 
-        $this->info("Framework set to {$framework} (dev mode). Run: composer dev");
+        $this->info("Framework set to {$framework} (dev mode)");
 
         return self::SUCCESS;
     }
