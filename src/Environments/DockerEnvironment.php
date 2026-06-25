@@ -186,9 +186,10 @@ class DockerEnvironment implements Environment
             $args[] = $stack;
         }
 
-        $modules = $command->getSelectedModules();
-        if (! empty($modules)) {
-            $args[] = '--modules='.implode(',', $modules);
+        if ($modules = $command->option('modules')) {
+            $args[] = '--modules='.$modules;
+        } else {
+            $args[] = '--modules='.implode(',', $command->getSelectedModules());
         }
 
         foreach (['fresh', 'dev', 'all-modules'] as $opt) {

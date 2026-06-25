@@ -122,7 +122,7 @@ class InstallCommand extends Command
 
     protected function promptForModules(): void
     {
-        if ($this->option('all-modules') || $this->option('modules') || $this->option('dev') || $this->isCI()) {
+        if ($this->option('all-modules') || $this->option('modules') !== null || $this->option('dev') || $this->isCI()) {
             return;
         }
 
@@ -410,9 +410,8 @@ class InstallCommand extends Command
 
             return collect($available)
                 ->filter(function (string $package) use ($requested) {
-                    $name = strtolower(Str::after($package, '/'));
-
-                    return $requested->contains($name);
+                    return $requested->contains(strtolower($package))
+                        || $requested->contains(strtolower(Str::after($package, '/')));
                 })
                 ->values()
                 ->all();
