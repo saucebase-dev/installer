@@ -26,119 +26,28 @@ class DockerEnvironmentTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
-    // buildContainerArgs
+    // resolveModules
     // -------------------------------------------------------------------------
 
-    public function test_always_includes_driver_native_and_force_flags(): void
+    public function test_resolve_modules_returns_selected_modules_when_no_option_set(): void
     {
-        $args = $this->buildArgs();
+        $modules = $this->resolveModules(modules: ['saucebase/auth', 'saucebase/billing']);
 
-        $this->assertContains('--driver=native', $args);
-        $this->assertContains('--force', $args);
+        $this->assertSame(['saucebase/auth', 'saucebase/billing'], $modules);
     }
 
-    public function test_always_includes_artisan_command(): void
+    public function test_resolve_modules_parses_modules_option(): void
     {
-        $args = $this->buildArgs();
+        $modules = $this->resolveModules(options: ['modules' => 'saucebase/auth, saucebase/billing']);
 
-        $this->assertContains('php', $args);
-        $this->assertContains('artisan', $args);
-        $this->assertContains('saucebase:install', $args);
+        $this->assertSame(['saucebase/auth', 'saucebase/billing'], $modules);
     }
 
-    public function test_forwards_stack_argument(): void
+    public function test_resolve_modules_returns_empty_when_nothing_selected(): void
     {
-        $args = $this->buildArgs(stack: 'vue');
+        $modules = $this->resolveModules(modules: []);
 
-        $this->assertContains('vue', $args);
-    }
-
-    public function test_forwards_react_stack(): void
-    {
-        $args = $this->buildArgs(stack: 'react');
-
-        $this->assertContains('react', $args);
-    }
-
-    public function test_omits_stack_when_null(): void
-    {
-        $args = $this->buildArgs(stack: null);
-
-        $this->assertNotContains('vue', $args);
-        $this->assertNotContains('react', $args);
-    }
-
-    public function test_forwards_selected_modules_as_comma_list(): void
-    {
-        $args = $this->buildArgs(modules: ['saucebase/auth', 'saucebase/billing']);
-
-        $this->assertContains('--modules=saucebase/auth,saucebase/billing', $args);
-    }
-
-    public function test_includes_empty_modules_arg_when_none_selected(): void
-    {
-        $args = $this->buildArgs(modules: []);
-
-        $this->assertContains('--modules=', $args);
-    }
-
-    public function test_forwards_fresh_flag(): void
-    {
-        $args = $this->buildArgs(options: ['fresh' => true]);
-
-        $this->assertContains('--fresh', $args);
-    }
-
-    public function test_omits_fresh_when_not_set(): void
-    {
-        $args = $this->buildArgs(options: ['fresh' => false]);
-
-        $this->assertNotContains('--fresh', $args);
-    }
-
-    public function test_forwards_dev_flag(): void
-    {
-        $args = $this->buildArgs(options: ['dev' => true]);
-
-        $this->assertContains('--dev', $args);
-    }
-
-    public function test_forwards_all_modules_flag(): void
-    {
-        $args = $this->buildArgs(options: ['all-modules' => true]);
-
-        $this->assertContains('--all-modules', $args);
-    }
-
-    public function test_forwards_modules_option_when_set_directly(): void
-    {
-        $args = $this->buildArgs(modules: [], options: ['modules' => 'saucebase/auth,saucebase/billing']);
-
-        $this->assertContains('--modules=saucebase/auth,saucebase/billing', $args);
-    }
-
-    public function test_always_includes_modules_arg_even_when_none_selected(): void
-    {
-        $args = $this->buildArgs(modules: [], options: []);
-
-        $matched = array_filter($args, fn (string $a) => str_starts_with($a, '--modules='));
-        $this->assertNotEmpty($matched, '--modules= must always be present so the container skips the interactive prompt');
-    }
-
-    public function test_multiple_flags_are_all_forwarded(): void
-    {
-        $args = $this->buildArgs(
-            stack: 'react',
-            modules: ['saucebase/auth'],
-            options: ['fresh' => true, 'dev' => true],
-        );
-
-        $this->assertContains('react', $args);
-        $this->assertContains('--modules=saucebase/auth', $args);
-        $this->assertContains('--fresh', $args);
-        $this->assertContains('--dev', $args);
-        $this->assertContains('--driver=native', $args);
-        $this->assertContains('--force', $args);
+        $this->assertSame([], $modules);
     }
 
     // -------------------------------------------------------------------------
@@ -573,23 +482,29 @@ class DockerEnvironmentTest extends TestCase
 
     /**
      * @param  string[]  $modules
-     * @param  array<string, bool>  $options
+     * @param  array<string, mixed>  $options
      * @return string[]
      */
-    private function buildArgs(
-        ?string $stack = null,
+    private function resolveModules(
         array $modules = [],
         array $options = [],
     ): array {
-        $command = new FakeInstallCommand($stack, $modules, $options);
+        $command = new FakeInstallCommand(null, $modules, $options);
 
-        return (new DockerEnvironment)->buildContainerArgs($command);
+        $exposed = new class extends DockerEnvironment
+        {
+            public function resolveModules(InstallCommand $command): array
+            {
+                return parent::resolveModules($command);
+            }
+        };
+
+        return $exposed->resolveModules($command);
     }
 }
 
 /**
- * Minimal InstallCommand stub for testing buildContainerArgs() without
- * needing a real Symfony Console input binding.
+ * Minimal InstallCommand stub for DockerEnvironment tests.
  *
  * @internal
  */
