@@ -40,7 +40,7 @@ Prompts for the frontend stack (Vue or React) and the environment driver (Docker
 4. Patches `.env` with Docker-appropriate defaults — MySQL credentials, `MAIL_MAILER=smtp` for Mailpit, and `APP_URL` matching the SSL choice
 5. Starts `docker compose` and installs PHP dependencies inside the container
 6. Generates `APP_KEY`, runs migrations, wires up the frontend stack
-7. Installs any selected modules (`composer require` → patches → `modules:sync` → `modules:migrate` → `modules:seed` per module)
+7. Installs any selected modules (single `composer require` for all → patches → `modules:sync` → `migrate` → `db:seed --module` per module)
 8. Creates the storage symlink and clears caches
 
 **Native driver** (`--driver=native`):

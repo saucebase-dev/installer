@@ -250,10 +250,10 @@ class DockerEnvironment implements Environment
 
         $command->applyModulePatches($modules);
         $this->execInContainer($command, ['php', 'artisan', 'modules:sync']);
+        $this->execInContainer($command, ['php', 'artisan', 'migrate', '--force'], timeout: 300);
 
         foreach ($modules as $package) {
             $name = Str::after($package, '/');
-            $this->execInContainer($command, ['php', 'artisan', 'modules:migrate', "--module={$name}", '--force'], timeout: 120);
             $this->execInContainer($command, ['php', 'artisan', 'db:seed', "--module={$name}", '--force']);
         }
     }
