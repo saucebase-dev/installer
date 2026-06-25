@@ -314,39 +314,23 @@ class InstallCommand extends Command
 
         $this->newLine();
 
-        // Phase 1: require all selected packages
-        $anyFailed = false;
-        foreach ($selected as $package) {
-            $ok = false;
-            $this->components->task("Requiring {$package}", function () use ($package, &$ok) {
-                $process = new Process(['composer', 'require', $package, '--no-interaction']);
-                $process->setTimeout(300);
-                $process->run();
+        // Phase 1: require all selected packages in one Composer run
+        $ok = false;
+        $this->components->task('Installing modules', function () use ($selected, &$ok) {
+            $process = new Process(array_merge(['composer', 'require', '--no-interaction'], $selected));
+            $process->setTimeout(300);
+            $process->run();
 
-                return $ok = $process->isSuccessful();
-            });
+            return $ok = $process->isSuccessful();
+        });
 
-            if (! $ok) {
-                $anyFailed = true;
-            }
-        }
-
-        if ($anyFailed) {
-            $this->components->warn('One or more packages failed to install — skipping module sync and migrations.');
+        if (! $ok) {
+            $this->components->warn('Module installation failed — skipping patches, sync, and migrations.');
 
             return;
         }
 
-        // Phase 2: regenerate autoload once for all new modules
-        $this->components->task('Dumping autoload', function () {
-            $process = new Process(['composer', 'dump-autoload', '--no-interaction']);
-            $process->setTimeout(120);
-            $process->run();
-
-            return $process->isSuccessful();
-        });
-
-        // Phase 2.5: apply any patches the modules ship for the host app
+        // Phase 2: apply any patches the modules ship for the host app
         $this->applyModulePatches($selected);
 
         // Phase 3: sync module configs, then migrate + seed each module individually
@@ -370,7 +354,7 @@ class InstallCommand extends Command
             });
 
             $this->components->task("Seeding {$name}", function () use ($name) {
-                $process = new Process([PHP_BINARY, base_path('artisan'), 'modules:seed', "--module={$name}"]);
+                $process = new Process([PHP_BINARY, base_path('artisan'), 'db:seed', "--module={$name}", '--force']);
                 $process->setTimeout(60);
                 $process->run();
 
