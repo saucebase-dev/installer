@@ -75,12 +75,11 @@ class DockerEnvironmentTest extends TestCase
         $this->assertContains('--modules=saucebase/auth,saucebase/billing', $args);
     }
 
-    public function test_omits_modules_arg_when_none_selected(): void
+    public function test_includes_empty_modules_arg_when_none_selected(): void
     {
         $args = $this->buildArgs(modules: []);
 
-        $matched = array_filter($args, fn (string $a) => str_starts_with($a, '--modules='));
-        $this->assertEmpty($matched);
+        $this->assertContains('--modules=', $args);
     }
 
     public function test_forwards_fresh_flag(): void
@@ -109,6 +108,21 @@ class DockerEnvironmentTest extends TestCase
         $args = $this->buildArgs(options: ['all-modules' => true]);
 
         $this->assertContains('--all-modules', $args);
+    }
+
+    public function test_forwards_modules_option_when_set_directly(): void
+    {
+        $args = $this->buildArgs(modules: [], options: ['modules' => 'saucebase/auth,saucebase/billing']);
+
+        $this->assertContains('--modules=saucebase/auth,saucebase/billing', $args);
+    }
+
+    public function test_always_includes_modules_arg_even_when_none_selected(): void
+    {
+        $args = $this->buildArgs(modules: [], options: []);
+
+        $matched = array_filter($args, fn (string $a) => str_starts_with($a, '--modules='));
+        $this->assertNotEmpty($matched, '--modules= must always be present so the container skips the interactive prompt');
     }
 
     public function test_multiple_flags_are_all_forwarded(): void

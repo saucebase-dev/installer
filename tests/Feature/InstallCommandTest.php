@@ -521,6 +521,50 @@ class InstallCommandTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // resolveModuleSelection — --modules= matching
+    // -------------------------------------------------------------------------
+
+    public function test_resolve_matches_full_package_name(): void
+    {
+        $cmd = new TestableInstallCommand;
+        $cmd->fakeOptions = ['modules' => 'saucebase/auth'];
+
+        $result = $cmd->exposedResolveModuleSelection(['saucebase/auth', 'saucebase/billing']);
+
+        $this->assertSame(['saucebase/auth'], $result);
+    }
+
+    public function test_resolve_matches_short_name(): void
+    {
+        $cmd = new TestableInstallCommand;
+        $cmd->fakeOptions = ['modules' => 'auth'];
+
+        $result = $cmd->exposedResolveModuleSelection(['saucebase/auth', 'saucebase/billing']);
+
+        $this->assertSame(['saucebase/auth'], $result);
+    }
+
+    public function test_resolve_matches_mixed_case_short_name(): void
+    {
+        $cmd = new TestableInstallCommand;
+        $cmd->fakeOptions = ['modules' => 'Auth'];
+
+        $result = $cmd->exposedResolveModuleSelection(['saucebase/auth', 'saucebase/billing']);
+
+        $this->assertSame(['saucebase/auth'], $result);
+    }
+
+    public function test_resolve_matches_multiple_full_package_names(): void
+    {
+        $cmd = new TestableInstallCommand;
+        $cmd->fakeOptions = ['modules' => 'saucebase/auth,saucebase/billing'];
+
+        $result = $cmd->exposedResolveModuleSelection(['saucebase/auth', 'saucebase/billing', 'saucebase/settings']);
+
+        $this->assertSame(['saucebase/auth', 'saucebase/billing'], $result);
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
