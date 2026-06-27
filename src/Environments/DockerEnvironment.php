@@ -5,12 +5,11 @@ namespace Saucebase\Installer\Environments;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Commands\InstallCommand;
-use Saucebase\Installer\Environments\Contracts\Environment;
 use Symfony\Component\Process\Process;
 
 use function Laravel\Prompts\confirm;
 
-class DockerEnvironment implements Environment
+class DockerEnvironment extends Environment
 {
     protected bool $ssl = true;
 
@@ -41,17 +40,22 @@ class DockerEnvironment implements Environment
         return $missing;
     }
 
-    public function run(InstallCommand $command): int
+    protected function beforePrompts(InstallCommand $command): ?int
     {
         $this->promptForSsl($command);
 
         if ($this->ssl && ! $this->commandExists('mkcert')) {
             $command->error('mkcert is required for SSL. Install it with: brew install mkcert');
-            $command->line('Then re-run: php artisan saucebase:install --driver=docker');
+            $command->info('Official mkcert installation instructions: https://github.com/FiloSottile/mkcert');
 
             return InstallCommand::FAILURE;
         }
 
+        return null;
+    }
+
+    protected function boot(InstallCommand $command): int
+    {
         $this->publishStubs($command);
         $this->generateSsl($command);
 
@@ -78,10 +82,14 @@ class DockerEnvironment implements Environment
         }
 
         $this->runStack($command);
-        $this->installModules($command);
+
+        if (! $this->installModules($command)) {
+            return InstallCommand::FAILURE;
+        }
+
+        $command->rewriteCrossModuleImports();
         $this->createStorageLink($command);
         $this->clearCaches($command);
-        $this->reloadDocker($command);
 
         return InstallCommand::SUCCESS;
     }
@@ -103,10 +111,13 @@ class DockerEnvironment implements Environment
         Artisan::call('vendor:publish', ['--tag' => 'saucebase-docker', '--no-interaction' => true]);
 
         if (! $this->ssl) {
-            copy(
+            $copied = copy(
                 __DIR__.'/../../../stubs/docker/docker/nginx-no-ssl.conf',
                 base_path('docker/nginx.conf'),
             );
+            if (! $copied) {
+                $command->warn('Failed to write nginx.conf (no-SSL). Check that Docker stubs were published first.');
+            }
         }
     }
 
@@ -120,12 +131,6 @@ class DockerEnvironment implements Environment
         $keyFile = base_path('docker/ssl/app.key.pem');
 
         if (file_exists($certFile) && file_exists($keyFile)) {
-            return;
-        }
-
-        if (! $this->commandExists('mkcert')) {
-            $command->warn('mkcert not found — skipping SSL generation. HTTPS may not work.');
-
             return;
         }
 
@@ -158,6 +163,7 @@ class DockerEnvironment implements Environment
         $up = new Process(['docker', 'compose', 'up', '-d', '--wait', '--build']);
         $up->setTimeout(30 * 60); // 30 minutes — first run pulls images + builds layers
         $up->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
+        $command->newLine();
 
         if (! $up->isSuccessful()) {
             $command->error('Docker failed to start: '.$up->getErrorOutput());
@@ -194,6 +200,10 @@ class DockerEnvironment implements Environment
     protected function generateAppKey(InstallCommand $command): bool
     {
         $command->info('Generating application key...');
+        $env = @file_get_contents(base_path('.env'));
+        if ($env !== false && preg_match('/^APP_KEY=base64:.+$/m', $env)) {
+            return true;
+        }
 
         return $this->execInContainer($command, ['php', 'artisan', 'key:generate', '--force']);
     }
@@ -226,12 +236,12 @@ class DockerEnvironment implements Environment
         $this->execInContainer($command, $args);
     }
 
-    protected function installModules(InstallCommand $command): void
+    protected function installModules(InstallCommand $command): bool
     {
         $modules = $this->resolveModules($command);
 
         if (empty($modules)) {
-            return;
+            return true;
         }
 
         $command->info('Installing modules...');
@@ -245,7 +255,7 @@ class DockerEnvironment implements Environment
         if (! $ok) {
             $command->warn('Failed to install one or more modules — skipping patches, sync, and migrations.');
 
-            return;
+            return false;
         }
 
         $command->applyModulePatches($modules);
@@ -254,25 +264,39 @@ class DockerEnvironment implements Environment
 
         foreach ($modules as $package) {
             $name = Str::after($package, '/');
+
+            if (! $command->moduleHasSeeder($name)) {
+                continue;
+            }
+
             $this->execInContainer($command, ['php', 'artisan', 'db:seed', "--module={$name}", '--force']);
         }
+
+        return true;
     }
 
-    protected function resolveModules(InstallCommand $command): array
+    protected function nextSteps(InstallCommand $command): array
     {
-        if ($command->option('all-modules')) {
-            $available = $command->fetchAvailableModules();
+        $appUrl = $this->readEnvValue('APP_URL') ?? ($this->ssl ? 'https://localhost' : 'http://localhost');
 
-            return $command->getSelectedStack()
-                ? $command->filterModulesByFramework($available, $command->getSelectedStack())
-                : $available;
+        return [
+            'Compile frontend assets: <fg=yellow>npm install && npm run dev</>',
+            'Open your app: <fg=yellow>'.$appUrl.'</>',
+            'Email testing (Mailpit): <fg=yellow>http://localhost:8025</>',
+        ];
+    }
+
+    private function readEnvValue(string $key): ?string
+    {
+        $env = @file_get_contents(base_path('.env'));
+        if ($env === false) {
+            return null;
+        }
+        if (preg_match('/^'.preg_quote($key, '/').'=(.+)$/m', $env, $m)) {
+            return trim($m[1], "\"'");
         }
 
-        if ($raw = $command->option('modules')) {
-            return array_values(array_filter(array_map('trim', explode(',', $raw))));
-        }
-
-        return $command->getSelectedModules();
+        return null;
     }
 
     protected function createStorageLink(InstallCommand $command): void
@@ -285,14 +309,6 @@ class DockerEnvironment implements Environment
     {
         $command->info('Clearing caches...');
         $this->execInContainer($command, ['php', 'artisan', 'optimize:clear']);
-    }
-
-    protected function reloadDocker(InstallCommand $command): void
-    {
-        $command->info('Reloading container...');
-        $process = new Process(['docker', 'compose', 'up', '-d', '--wait']);
-        $process->setTimeout(60);
-        $process->run();
     }
 
     protected function setDockerEnvDefaults(InstallCommand $command): void
@@ -371,8 +387,4 @@ class DockerEnvironment implements Environment
         return (bool) shell_exec('docker compose version 2>/dev/null');
     }
 
-    protected function commandExists(string $name): bool
-    {
-        return (bool) shell_exec("which {$name} 2>/dev/null");
-    }
 }

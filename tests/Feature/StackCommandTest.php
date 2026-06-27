@@ -380,25 +380,6 @@ class StackCommandTest extends TestCase
         $this->assertDirectoryDoesNotExist($this->tmpDir.'/stubs/saucebase/stack');
     }
 
-    public function test_install_mode_rewrites_cross_module_framework_imports(): void
-    {
-        $this->seedFakeStubs('vue');
-        $this->seedFakeSourceDir('vue');
-
-        $consumerDir = $this->tmpDir.'/modules/consumer/resources/js/vue/pages';
-        $this->files->ensureDirectoryExists($consumerDir);
-        file_put_contents(
-            $consumerDir.'/Index.vue',
-            "import Foo from '@modules/other/resources/js/vue/components/Foo.vue';\n"
-        );
-
-        $this->artisan('saucebase:stack vue')->assertSuccessful();
-
-        $content = file_get_contents($this->tmpDir.'/modules/consumer/resources/js/pages/Index.vue');
-        $this->assertStringNotContainsString('/vue/', $content);
-        $this->assertStringContainsString('@modules/other/resources/js/components/Foo.vue', $content);
-    }
-
     public function test_install_mode_removes_framework_subdirs_from_modules(): void
     {
         $this->seedFakeStubs('vue');

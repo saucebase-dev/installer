@@ -4,7 +4,7 @@ namespace Saucebase\Installer\Tests\Feature\Environments;
 
 use Illuminate\Console\Command;
 use Saucebase\Installer\Console\Commands\InstallCommand;
-use Saucebase\Installer\Environments\Contracts\Environment;
+use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\DockerEnvironment;
 use Saucebase\Installer\Tests\TestCase;
 
@@ -20,7 +20,7 @@ class DockerEnvironmentTest extends TestCase
         $this->assertNotEmpty((new DockerEnvironment)->label());
     }
 
-    public function test_implements_environment_contract(): void
+    public function test_extends_environment_base(): void
     {
         $this->assertInstanceOf(Environment::class, new DockerEnvironment);
     }
@@ -48,6 +48,13 @@ class DockerEnvironmentTest extends TestCase
         $modules = $this->resolveModules(modules: []);
 
         $this->assertSame([], $modules);
+    }
+
+    public function test_resolve_modules_normalizes_short_names_to_saucebase_vendor(): void
+    {
+        $modules = $this->resolveModules(options: ['modules' => 'auth, billing']);
+
+        $this->assertSame(['saucebase/auth', 'saucebase/billing'], $modules);
     }
 
     // -------------------------------------------------------------------------
@@ -293,6 +300,145 @@ class DockerEnvironmentTest extends TestCase
 
         $this->assertSame(Command::FAILURE, $result);
         $this->assertFalse($spy->installCalled, 'in-container install must not run when composer install fails');
+    }
+
+    // -------------------------------------------------------------------------
+    // generateAppKey idempotency
+    // -------------------------------------------------------------------------
+
+    public function test_generate_app_key_skips_when_key_already_set(): void
+    {
+        $spy = (object) ['execCalled' => false];
+        $envPath = base_path('.env');
+        file_put_contents($envPath, "APP_KEY=base64:abc123==\n");
+
+        try {
+            $env = new class($spy) extends DockerEnvironment
+            {
+                public function __construct(private object $spy) {}
+
+                protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
+                {
+                    $this->spy->execCalled = true;
+
+                    return true;
+                }
+
+                public function exposedGenerateAppKey(InstallCommand $command): bool
+                {
+                    return $this->generateAppKey($command);
+                }
+            };
+
+            $result = $env->exposedGenerateAppKey(new FakeInstallCommand(null, [], []));
+
+            $this->assertTrue($result);
+            $this->assertFalse($spy->execCalled, 'key:generate must not run when APP_KEY is already set');
+        } finally {
+            @unlink($envPath);
+        }
+    }
+
+    public function test_generate_app_key_runs_when_key_missing(): void
+    {
+        $spy = (object) ['execCalled' => false];
+        $envPath = base_path('.env');
+        file_put_contents($envPath, "APP_NAME=Test\n");
+
+        try {
+            $env = new class($spy) extends DockerEnvironment
+            {
+                public function __construct(private object $spy) {}
+
+                protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
+                {
+                    $this->spy->execCalled = true;
+
+                    return true;
+                }
+
+                public function exposedGenerateAppKey(InstallCommand $command): bool
+                {
+                    return $this->generateAppKey($command);
+                }
+            };
+
+            $env->exposedGenerateAppKey(new FakeInstallCommand(null, [], []));
+
+            $this->assertTrue($spy->execCalled, 'key:generate must run when APP_KEY is not set');
+        } finally {
+            @unlink($envPath);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // installModules failure propagation
+    // -------------------------------------------------------------------------
+
+    public function test_boot_returns_failure_when_install_modules_fails(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            protected function beforePrompts(InstallCommand $command): ?int
+            {
+                return null;
+            }
+
+            protected function publishStubs(InstallCommand $command): void {}
+
+            protected function generateSsl(InstallCommand $command): void {}
+
+            protected function setDockerEnvDefaults(InstallCommand $command): void {}
+
+            protected function startDocker(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function runComposerInContainer(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function generateAppKey(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function runMigrations(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function runStack(InstallCommand $command): void {}
+
+            protected function installModules(InstallCommand $command): bool
+            {
+                return false;
+            }
+        };
+
+        $command = new class extends FakeInstallCommand
+        {
+            public function __construct()
+            {
+                parent::__construct(null, [], []);
+            }
+
+            public function ensureEnvFile(): bool
+            {
+                return true;
+            }
+
+            public function promptForModules(): void {}
+
+            public function displaySuccess(array $steps = []): void {}
+
+            public function rewriteCrossModuleImports(): void {}
+        };
+
+        $result = $env->run($command);
+        $this->assertSame(Command::FAILURE, $result);
     }
 
     // -------------------------------------------------------------------------

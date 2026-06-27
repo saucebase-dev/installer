@@ -6,7 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
-use Saucebase\Installer\Environments\Contracts\Environment;
+use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\DockerEnvironment;
 use Saucebase\Installer\Environments\NativeEnvironment;
 use Symfony\Component\Process\Process;
@@ -62,8 +62,6 @@ class InstallCommand extends Command
             return self::FAILURE;
         }
 
-        $this->promptForModules();
-
         return $driver->run($this);
     }
 
@@ -83,15 +81,16 @@ class InstallCommand extends Command
         $name = $this->option('driver') ?? select(
             label: 'How would you like to run Saucebase?',
             options: [
-                'native' => 'Native PHP - minimal setup, ideal for exploring',
                 'docker' => 'Docker - recommended for real projects: MySQL, Redis, Mailpit, HTTPS',
+                'native' => 'Native PHP - minimal setup, ideal for exploring',
             ],
-            default: 'native',
+            default: 'docker',
         );
 
         return match ($name) {
             'docker' => new DockerEnvironment,
-            default => new NativeEnvironment,
+            'native' => new NativeEnvironment,
+            default => throw new \InvalidArgumentException("Unknown driver: {$name}"),
         };
     }
 
@@ -120,7 +119,7 @@ class InstallCommand extends Command
         }
     }
 
-    protected function promptForModules(): void
+    public function promptForModules(): void
     {
         if ($this->option('all-modules') || $this->option('modules') !== null || $this->option('dev') || $this->isCI()) {
             return;
@@ -218,9 +217,9 @@ class InstallCommand extends Command
 
         $this->runStack();
         $this->setupModules();
+        $this->rewriteCrossModuleImports();
         $this->createStorageLink();
         $this->clearCaches();
-        $this->displaySuccess();
 
         return self::SUCCESS;
     }
@@ -298,6 +297,16 @@ class InstallCommand extends Command
 
     protected function setupModules(): void
     {
+        // Fast path: skip Packagist discovery when all requested names are fully qualified
+        if ($opt = $this->option('modules')) {
+            $names = array_values(array_filter(array_map(fn ($n) => strtolower(trim($n)), explode(',', $opt))));
+            if ($names && ! array_filter($names, fn ($n) => ! str_contains($n, '/'))) {
+                $this->doInstallModules($names);
+
+                return;
+            }
+        }
+
         $available = $this->fetchAvailableModules();
 
         if (empty($available)) {
@@ -312,6 +321,11 @@ class InstallCommand extends Command
             return;
         }
 
+        $this->doInstallModules($selected);
+    }
+
+    protected function doInstallModules(array $selected): void
+    {
         $this->newLine();
 
         // Phase 1: require all selected packages in one Composer run
@@ -353,6 +367,10 @@ class InstallCommand extends Command
         foreach ($selected as $package) {
             $name = Str::after($package, '/');
 
+            if (! $this->moduleHasSeeder($name)) {
+                continue;
+            }
+
             $this->components->task("Seeding {$name}", function () use ($name) {
                 $process = new Process([PHP_BINARY, base_path('artisan'), 'db:seed', "--module={$name}", '--force']);
                 $process->setTimeout(60);
@@ -361,6 +379,41 @@ class InstallCommand extends Command
                 return $process->isSuccessful();
             });
         }
+    }
+
+    public function rewriteCrossModuleImports(): void
+    {
+        $frameworks = ['vue', 'react', 'svelte'];
+        $pattern = implode('|', array_map(fn ($f) => preg_quote($f, '#'), $frameworks));
+        $extensions = ['vue', 'ts', 'tsx', 'js'];
+        $moduleDirs = glob(base_path('modules/*/resources/js'), GLOB_ONLYDIR) ?: [];
+
+        foreach ($moduleDirs as $jsRoot) {
+            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($jsRoot));
+            foreach ($iterator as $file) {
+                if (! $file->isFile() || ! in_array($file->getExtension(), $extensions, true)) {
+                    continue;
+                }
+                $path = $file->getPathname();
+                $content = file_get_contents($path);
+                $rewritten = preg_replace(
+                    "#(@modules/[^/]+/resources/js/)({$pattern})/#",
+                    '$1',
+                    $content
+                );
+                if ($rewritten !== $content) {
+                    file_put_contents($path, $rewritten);
+                }
+            }
+        }
+    }
+
+    public function moduleHasSeeder(string $name): bool
+    {
+        $seederFile = 'database/seeders/DatabaseSeeder.php';
+
+        return file_exists(base_path('modules/'.strtolower($name).'/'.$seederFile))
+            || file_exists(base_path('vendor/saucebase/'.strtolower($name).'/'.$seederFile));
     }
 
     public function applyModulePatches(array $modules): void
@@ -525,16 +578,18 @@ class InstallCommand extends Command
         $this->newLine();
     }
 
-    protected function displaySuccess(): void
+    public function displaySuccess(array $steps = []): void
     {
         $this->newLine();
         $this->info('Installation complete!');
         $this->newLine();
-        $this->line('Next steps:');
-        $this->line('  1. Ensure <fg=yellow>APP_URL</> is set correctly in <fg=yellow>.env</>');
-        $this->line('  2. Start the dev server: <fg=yellow>'.($this->option('driver') === 'docker' ? 'npm run dev' : 'php artisan serve or composer dev').'</>');
-        $this->line('  3. Open your app in the browser: <fg=yellow>'.config('app.url').'</>');
-        $this->newLine();
+        if ($steps) {
+            $this->line('Next steps:');
+            foreach (array_values($steps) as $i => $step) {
+                $this->line('  '.($i + 1).'. '.$step);
+            }
+            $this->newLine();
+        }
         $this->line('Learn more: <fg=cyan>https://github.com/saucebase-dev/saucebase</>');
     }
 }

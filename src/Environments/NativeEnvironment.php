@@ -3,9 +3,8 @@
 namespace Saucebase\Installer\Environments;
 
 use Saucebase\Installer\Console\Commands\InstallCommand;
-use Saucebase\Installer\Environments\Contracts\Environment;
 
-class NativeEnvironment implements Environment
+class NativeEnvironment extends Environment
 {
     public function name(): string
     {
@@ -28,13 +27,16 @@ class NativeEnvironment implements Environment
         return $missing;
     }
 
-    public function run(InstallCommand $command): int
+    protected function boot(InstallCommand $command): int
     {
         return $command->install();
     }
 
-    protected function commandExists(string $name): bool
+    protected function nextSteps(InstallCommand $command): array
     {
-        return (bool) shell_exec("which {$name} 2>/dev/null");
+        return [
+            'Start the dev server: <fg=yellow>composer dev</>',
+            'Open your app: <fg=yellow>'.config('app.url').'</>',
+        ];
     }
 }

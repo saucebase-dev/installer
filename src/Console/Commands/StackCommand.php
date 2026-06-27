@@ -100,9 +100,8 @@ class StackCommand extends Command
         $this->files->deleteDirectory($this->jsRoot.'/react');
         $this->files->deleteDirectory($this->basePath.'/stubs/saucebase/stack');
         $this->deployModuleFiles($framework);
-        $this->rewriteCrossModuleImports($framework);
         $this->flattenRecipeStubs($framework);
-        $this->info("Framework set to {$framework}. Run: npm install && composer dev");
+        $this->info("Framework set to {$framework}. Run: npm install to install dependencies.");
 
         return self::SUCCESS;
     }
@@ -285,42 +284,6 @@ class StackCommand extends Command
             $this->files->deleteDirectory($fwPath);
             foreach ($others as $other) {
                 $this->files->deleteDirectory($jsRoot.'/'.$other);
-            }
-        }
-    }
-
-    private function rewriteCrossModuleImports(string $framework): void
-    {
-        $moduleDirs = glob($this->basePath.'/modules/*/', GLOB_ONLYDIR);
-
-        if (! $moduleDirs) {
-            return;
-        }
-
-        $extensions = ['vue', 'ts', 'tsx', 'js'];
-
-        foreach ($moduleDirs as $moduleDir) {
-            $jsRoot = $moduleDir.'resources/js';
-
-            if (! $this->files->isDirectory($jsRoot)) {
-                continue;
-            }
-
-            foreach ($this->files->allFiles($jsRoot) as $file) {
-                if (! in_array($file->getExtension(), $extensions)) {
-                    continue;
-                }
-
-                $content = $this->files->get($file->getPathname());
-                $rewritten = preg_replace(
-                    '#(@modules/[^/]+/resources/js/)'.preg_quote($framework, '#').'/#',
-                    '$1',
-                    $content
-                );
-
-                if ($rewritten !== $content) {
-                    $this->files->put($file->getPathname(), $rewritten);
-                }
             }
         }
     }

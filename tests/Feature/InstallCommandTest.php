@@ -5,7 +5,7 @@ namespace Saucebase\Installer\Tests\Feature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 use Saucebase\Installer\Console\Commands\InstallCommand;
-use Saucebase\Installer\Environments\Contracts\Environment;
+use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\NativeEnvironment;
 use Saucebase\Installer\Tests\TestCase;
 
@@ -214,7 +214,7 @@ class InstallCommandTest extends TestCase
 
                 protected function clearCaches(): void {}
 
-                protected function displaySuccess(): void {}
+                public function displaySuccess(array $steps = []): void {}
 
                 protected function resolveDriver(): Environment
                 {
@@ -288,7 +288,7 @@ class InstallCommandTest extends TestCase
 
                 protected function clearCaches(): void {}
 
-                protected function displaySuccess(): void {}
+                public function displaySuccess(array $steps = []): void {}
             };
             $cmd->spy = $spy;
 
@@ -329,7 +329,7 @@ class InstallCommandTest extends TestCase
 
                 protected function clearCaches(): void {}
 
-                protected function displaySuccess(): void {}
+                public function displaySuccess(array $steps = []): void {}
             };
         });
 
@@ -361,7 +361,7 @@ class InstallCommandTest extends TestCase
                 {
                     $spy = $this->spy;
 
-                    return new class($spy) implements Environment
+                    return new class($spy) extends Environment
                     {
                         public function __construct(private object $spy) {}
 
@@ -385,6 +385,16 @@ class InstallCommandTest extends TestCase
                             $this->spy->runCalled = true;
 
                             return Command::SUCCESS;
+                        }
+
+                        protected function boot(InstallCommand $command): int
+                        {
+                            return Command::SUCCESS;
+                        }
+
+                        protected function nextSteps(InstallCommand $command): array
+                        {
+                            return [];
                         }
                     };
                 }
@@ -458,7 +468,7 @@ class InstallCommandTest extends TestCase
 
                 protected function clearCaches(): void {}
 
-                protected function displaySuccess(): void {}
+                public function displaySuccess(array $steps = []): void {}
 
                 protected function resolveDriver(): Environment
                 {
@@ -565,6 +575,121 @@ class InstallCommandTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // moduleHasSeeder — vendor/ path
+    // -------------------------------------------------------------------------
+
+    public function test_module_has_seeder_checks_vendor_path(): void
+    {
+        $name = 'sb-test-seeder-'.uniqid();
+        $vendorSeederDir = base_path("vendor/saucebase/{$name}/database/seeders");
+        @mkdir($vendorSeederDir, 0755, true);
+        file_put_contents($vendorSeederDir.'/DatabaseSeeder.php', '<?php');
+
+        try {
+            $cmd = new TestableInstallCommand;
+            $this->assertFalse(
+                file_exists(base_path("modules/{$name}/database/seeders/DatabaseSeeder.php")),
+                'modules/ path must not exist for this test to be valid'
+            );
+            $this->assertTrue($cmd->moduleHasSeeder($name), 'moduleHasSeeder() must detect seeder in vendor/saucebase/');
+        } finally {
+            @unlink($vendorSeederDir.'/DatabaseSeeder.php');
+            @rmdir($vendorSeederDir);
+            @rmdir(base_path("vendor/saucebase/{$name}/database"));
+            @rmdir(base_path("vendor/saucebase/{$name}"));
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // displaySuccess — sequential step numbering
+    // -------------------------------------------------------------------------
+
+    public function test_display_success_numbers_steps_sequentially(): void
+    {
+        $cmd = new class extends TestableInstallCommand
+        {
+            public array $capturedLines = [];
+
+            public function line($string, $style = null, $verbosity = null): void
+            {
+                $this->capturedLines[] = $string;
+            }
+
+            public function info($string, $verbosity = null): void {}
+
+            public function newLine($count = 1): static
+            {
+                return $this;
+            }
+        };
+
+        $cmd->displaySuccess([5 => 'first step', 10 => 'second step']);
+
+        $stepLines = implode(' ', array_filter(
+            $cmd->capturedLines,
+            fn ($l) => (bool) preg_match('/\d+\./', $l),
+        ));
+
+        $this->assertStringContainsString('1. first step', $stepLines);
+        $this->assertStringContainsString('2. second step', $stepLines);
+        $this->assertStringNotContainsString('6. first step', $stepLines);
+        $this->assertStringNotContainsString('11. second step', $stepLines);
+    }
+
+    // -------------------------------------------------------------------------
+    // setupModules — Packagist fast-path
+    // -------------------------------------------------------------------------
+
+    public function test_setup_modules_skips_packagist_when_fully_qualified_names_given(): void
+    {
+        $cmd = new class extends TestableInstallCommand
+        {
+            public bool $fetchCalled = false;
+
+            public function fetchAvailableModules(): array
+            {
+                $this->fetchCalled = true;
+
+                return [];
+            }
+        };
+        $cmd->fakeOptions = ['modules' => 'saucebase/auth'];
+        $cmd->exposedSetupModules();
+
+        $this->assertFalse($cmd->fetchCalled, 'Packagist must not be fetched when all names are fully qualified');
+    }
+
+    // -------------------------------------------------------------------------
+    // rewriteCrossModuleImports
+    // -------------------------------------------------------------------------
+
+    public function test_rewrite_cross_module_imports_strips_all_framework_segments(): void
+    {
+        $jsRoot = base_path('modules/sb-test-rewrite/resources/js');
+        @mkdir($jsRoot, 0755, true);
+        file_put_contents($jsRoot.'/app.ts', implode("\n", [
+            "import Foo from '@modules/other/resources/js/vue/components/Foo.vue';",
+            "import Bar from '@modules/other/resources/js/react/Bar.tsx';",
+        ]));
+
+        try {
+            $cmd = new TestableInstallCommand;
+            $cmd->rewriteCrossModuleImports();
+
+            $result = file_get_contents($jsRoot.'/app.ts');
+            $this->assertStringContainsString("@modules/other/resources/js/components/Foo.vue", $result);
+            $this->assertStringContainsString("@modules/other/resources/js/Bar.tsx", $result);
+            $this->assertStringNotContainsString('/vue/', $result);
+            $this->assertStringNotContainsString('/react/', $result);
+        } finally {
+            @unlink($jsRoot.'/app.ts');
+            @rmdir($jsRoot);
+            @rmdir(base_path('modules/sb-test-rewrite/resources'));
+            @rmdir(base_path('modules/sb-test-rewrite'));
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -633,6 +758,16 @@ class TestableInstallCommand extends InstallCommand
     public function exposedResolveModuleSelection(array $available): array
     {
         return $this->resolveModuleSelection($available);
+    }
+
+    public function exposedSetupModules(): void
+    {
+        $this->setupModules();
+    }
+
+    protected function doInstallModules(array $selected): void
+    {
+        // no-op — prevents composer require from running in unit tests
     }
 
     protected function fetchPackageFrameworks(string $package): array
