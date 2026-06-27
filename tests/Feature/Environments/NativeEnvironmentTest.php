@@ -4,7 +4,7 @@ namespace Saucebase\Installer\Tests\Feature\Environments;
 
 use Illuminate\Console\Command;
 use Saucebase\Installer\Console\Commands\InstallCommand;
-use Saucebase\Installer\Environments\Contracts\Environment;
+use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\NativeEnvironment;
 use Saucebase\Installer\Tests\TestCase;
 
@@ -20,7 +20,7 @@ class NativeEnvironmentTest extends TestCase
         $this->assertNotEmpty((new NativeEnvironment)->label());
     }
 
-    public function test_implements_environment_contract(): void
+    public function test_extends_environment_base(): void
     {
         $this->assertInstanceOf(Environment::class, new NativeEnvironment);
     }
@@ -70,6 +70,10 @@ class NativeEnvironmentTest extends TestCase
             {
                 public function __construct(public object $spy) {}
 
+                public function promptForModules(): void {}
+
+                public function displaySuccess(array $steps = []): void {}
+
                 public function install(): int
                 {
                     $this->spy->installCalled = true;
@@ -92,6 +96,10 @@ class NativeEnvironmentTest extends TestCase
         app()->bind(InstallCommand::class, function () {
             return new class extends InstallCommand
             {
+                public function promptForModules(): void {}
+
+                public function displaySuccess(array $steps = []): void {}
+
                 public function install(): int
                 {
                     return Command::FAILURE;
