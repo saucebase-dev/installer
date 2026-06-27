@@ -386,5 +386,4 @@ class DockerEnvironment extends Environment
     {
         return (bool) shell_exec('docker compose version 2>/dev/null');
     }
-
 }

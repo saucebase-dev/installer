@@ -4,8 +4,8 @@ namespace Saucebase\Installer\Tests\Feature\Environments;
 
 use Illuminate\Console\Command;
 use Saucebase\Installer\Console\Commands\InstallCommand;
-use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\DockerEnvironment;
+use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Tests\TestCase;
 
 class DockerEnvironmentTest extends TestCase

@@ -52,6 +52,7 @@ abstract class Environment
         if ($raw = $command->option('modules')) {
             return array_values(array_filter(array_map(function (string $name): string {
                 $name = strtolower(trim($name));
+
                 return $name !== '' ? (str_contains($name, '/') ? $name : "saucebase/{$name}") : '';
             }, explode(',', $raw))));
         }

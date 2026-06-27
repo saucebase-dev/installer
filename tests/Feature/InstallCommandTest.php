@@ -677,8 +677,8 @@ class InstallCommandTest extends TestCase
             $cmd->rewriteCrossModuleImports();
 
             $result = file_get_contents($jsRoot.'/app.ts');
-            $this->assertStringContainsString("@modules/other/resources/js/components/Foo.vue", $result);
-            $this->assertStringContainsString("@modules/other/resources/js/Bar.tsx", $result);
+            $this->assertStringContainsString('@modules/other/resources/js/components/Foo.vue', $result);
+            $this->assertStringContainsString('@modules/other/resources/js/Bar.tsx', $result);
             $this->assertStringNotContainsString('/vue/', $result);
             $this->assertStringNotContainsString('/react/', $result);
         } finally {

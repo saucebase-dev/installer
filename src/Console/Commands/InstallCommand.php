@@ -6,8 +6,8 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
-use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\DockerEnvironment;
+use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\NativeEnvironment;
 use Symfony\Component\Process\Process;
 
