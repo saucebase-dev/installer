@@ -24,8 +24,8 @@ services:
             - CACHE_DRIVER=${CACHE_DRIVER:-redis}
             - SESSION_DRIVER=${SESSION_DRIVER:-redis}
             - QUEUE_CONNECTION=${QUEUE_CONNECTION:-redis}
-            - MAIL_HOST=mailpit
-            - MAIL_PORT=1025
+            - MAIL_HOST=${MAIL_HOST:-mailpit}
+            - MAIL_PORT=${MAIL_PORT:-1025}
             - XDEBUG_MODE=${XDEBUG_MODE:-debug}
             - XDEBUG_CONFIG=${XDEBUG_CONFIG:-client_host=host.docker.internal client_port=9003}
         depends_on:
