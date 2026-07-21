@@ -103,20 +103,20 @@ class StackCommandTest extends TestCase
 
         $tmpDir = $this->tmpDir;
         $this->bindCommand(new class(new Filesystem, $tmpDir, $tmpDir.'/resources/js', $spy) extends StackCommand
+        {
+            private object $spy;
+
+            public function __construct(Filesystem $files, string $basePath, string $jsRoot, object $spy)
             {
-                private object $spy;
+                parent::__construct($files, $basePath, $jsRoot);
+                $this->spy = $spy;
+            }
 
-                public function __construct(Filesystem $files, string $basePath, string $jsRoot, object $spy)
-                {
-                    parent::__construct($files, $basePath, $jsRoot);
-                    $this->spy = $spy;
-                }
-
-                protected function runNpmInstall(): void
-                {
-                    $this->spy->called = true;
-                }
-            });
+            protected function runNpmInstall(): void
+            {
+                $this->spy->called = true;
+            }
+        });
 
         $this->artisan('stack vue --dev')->assertSuccessful();
         $this->assertTrue($spy->called);

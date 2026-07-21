@@ -66,20 +66,20 @@ class NativeEnvironmentTest extends TestCase
         $spy = (object) ['installCalled' => false];
 
         $command = new class($spy) extends InstallCommand
+        {
+            public function __construct(public object $spy) {}
+
+            public function promptForModules(): void {}
+
+            public function displaySuccess(array $steps = []): void {}
+
+            public function install(): int
             {
-                public function __construct(public object $spy) {}
+                $this->spy->installCalled = true;
 
-                public function promptForModules(): void {}
-
-                public function displaySuccess(array $steps = []): void {}
-
-                public function install(): int
-                {
-                    $this->spy->installCalled = true;
-
-                    return Command::SUCCESS;
-                }
-            };
+                return Command::SUCCESS;
+            }
+        };
 
         $env = new NativeEnvironment;
         $result = $env->run($command);
@@ -91,16 +91,16 @@ class NativeEnvironmentTest extends TestCase
     public function test_run_passes_through_failure_from_install(): void
     {
         $command = new class extends InstallCommand
+        {
+            public function promptForModules(): void {}
+
+            public function displaySuccess(array $steps = []): void {}
+
+            public function install(): int
             {
-                public function promptForModules(): void {}
-
-                public function displaySuccess(array $steps = []): void {}
-
-                public function install(): int
-                {
-                    return Command::FAILURE;
-                }
-            };
+                return Command::FAILURE;
+            }
+        };
 
         $env = new NativeEnvironment;
 
