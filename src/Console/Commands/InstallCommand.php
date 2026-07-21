@@ -3,41 +3,40 @@
 namespace Saucebase\Installer\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
-use Saucebase\Installer\Environments\DockerEnvironment;
+use Saucebase\Installer\Console\Commands\Concerns\DisplaysBanner;
 use Saucebase\Installer\Environments\Environment;
-use Saucebase\Installer\Environments\NativeEnvironment;
+use Saucebase\Installer\ModuleRegistry;
 use Symfony\Component\Process\Process;
 
-use function Laravel\Prompts\multiselect;
 use function Laravel\Prompts\select;
 
 class InstallCommand extends Command
 {
-    protected $signature = 'saucebase:install
+    use DisplaysBanner;
+
+    protected $signature = 'install
                             {stack? : The frontend stack to install (vue or react)}
+                            {--path= : The Saucebase application directory (defaults to the current directory)}
                             {--driver= : Environment driver (docker, native) — prompted if omitted}
+                            {--ssl= : Enable HTTPS with mkcert for docker (yes/no) — prompted if omitted}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
                             {--all-modules : Enable and migrate all available modules without prompting}
-                            {--modules= : Comma-separated list of modules to enable (e.g. Auth,Settings)}
+                            {--modules= : Comma-separated list of modules to enable (e.g. Auth,Settings), or "none"}
                             {--dev : Dev environment}
                             {--force : Skip confirmations}
                             {--no-logo : Suppress the welcome banner}';
 
-    protected $description = 'Install and configure Saucebase';
+    protected $description = 'Install and configure an existing Saucebase application';
 
     protected ?string $selectedStack = null;
 
     /** @var string[] */
     protected array $selectedModules = [];
 
-    /** @var string[] */
-    protected array $availableModules = [];
+    protected ?string $resolvedTargetPath = null;
 
-    /** @var array<string, string[]> */
-    protected array $moduleFrameworks = [];
+    protected ?ModuleRegistry $registry = null;
 
     public function handle(): int
     {
@@ -65,6 +64,41 @@ class InstallCommand extends Command
         return $driver->run($this);
     }
 
+    public function targetPath(): string
+    {
+        if ($this->resolvedTargetPath === null) {
+            try {
+                $path = $this->option('path');
+            } catch (\Throwable) {
+                // No input bound (command instantiated outside the console app).
+                $path = null;
+            }
+
+            $this->resolvedTargetPath = rtrim($path ?: getcwd(), '/');
+        }
+
+        return $this->resolvedTargetPath;
+    }
+
+    public function path(string $relative = ''): string
+    {
+        return $relative === '' ? $this->targetPath() : $this->targetPath().'/'.$relative;
+    }
+
+    /**
+     * Run an artisan command inside the target application via a subprocess.
+     *
+     * @param  string[]  $args
+     */
+    public function runArtisan(array $args, int $timeout = 120): bool
+    {
+        $process = new Process([PHP_BINARY, $this->path('artisan'), ...$args], $this->targetPath());
+        $process->setTimeout($timeout);
+        $process->run();
+
+        return $process->isSuccessful();
+    }
+
     public function getSelectedStack(): ?string
     {
         return $this->selectedStack;
@@ -87,11 +121,7 @@ class InstallCommand extends Command
             default: 'docker',
         );
 
-        return match ($name) {
-            'docker' => new DockerEnvironment,
-            'native' => new NativeEnvironment,
-            default => throw new \InvalidArgumentException("Unknown driver: {$name}"),
-        };
+        return Environment::make($name);
     }
 
     protected function captureStack(): void
@@ -111,11 +141,14 @@ class InstallCommand extends Command
         $this->selectedStack = $stack;
     }
 
-    protected function runStack(): void
+    public function runStack(): void
     {
         if ($this->selectedStack) {
             $isDev = $this->option('dev') ? ['--dev' => true] : [];
-            $this->call('saucebase:stack', array_merge(['stack' => $this->selectedStack], $isDev));
+            $this->call('stack', array_merge(
+                ['stack' => $this->selectedStack, '--path' => $this->targetPath()],
+                $isDev,
+            ));
         }
     }
 
@@ -139,17 +172,7 @@ class InstallCommand extends Command
             return;
         }
 
-        $options = collect($available)
-            ->mapWithKeys(fn (string $package) => [
-                $package => Str::studly(Str::after($package, '/')),
-            ])
-            ->all();
-
-        $this->selectedModules = multiselect(
-            label: 'Which modules would you like to install?',
-            options: $options,
-            default: [],
-        );
+        $this->selectedModules = $this->registry()->promptSelection($available);
     }
 
     /**
@@ -169,38 +192,17 @@ class InstallCommand extends Command
      */
     protected function fetchPackageFrameworks(string $package): array
     {
-        if (isset($this->moduleFrameworks[$package])) {
-            return $this->moduleFrameworks[$package];
-        }
+        return $this->registry()->frameworks($package);
+    }
 
-        $name = Str::after($package, '/');
-        $localManifest = $this->modulesBasePath()."/{$name}/composer.json";
-
-        if (file_exists($localManifest)) {
-            $local = json_decode((string) file_get_contents($localManifest), true);
-            $frameworks = data_get($local, 'extra.saucebase.frameworks');
-
-            if (is_array($frameworks) && ! empty($frameworks)) {
-                return $this->moduleFrameworks[$package] = $frameworks;
-            }
-        }
-
-        $response = Http::timeout(5)->get("https://raw.githubusercontent.com/saucebase-dev/{$name}/main/composer.json");
-
-        if ($response->ok()) {
-            $frameworks = data_get($response->json(), 'extra.saucebase.frameworks');
-
-            if (is_array($frameworks) && ! empty($frameworks)) {
-                return $this->moduleFrameworks[$package] = $frameworks;
-            }
-        }
-
-        return $this->moduleFrameworks[$package] = ['vue'];
+    protected function registry(): ModuleRegistry
+    {
+        return $this->registry ??= new ModuleRegistry($this->modulesBasePath());
     }
 
     protected function modulesBasePath(): string
     {
-        return base_path('modules');
+        return $this->path('modules');
     }
 
     public function install(): int
@@ -229,7 +231,7 @@ class InstallCommand extends Command
         $this->info('CI environment detected - running minimal setup...');
 
         $envOk = $this->ensureEnvFile();
-        $keyOk = ! empty(config('app.key'));
+        $keyOk = $this->envHasAppKey();
 
         $this->components->task('Verifying .env', fn () => $envOk);
         $this->components->task('Verifying app key', fn () => $keyOk);
@@ -245,12 +247,12 @@ class InstallCommand extends Command
 
     public function ensureEnvFile(): bool
     {
-        if (file_exists(base_path('.env'))) {
+        if (file_exists($this->path('.env'))) {
             return true;
         }
 
-        if (file_exists(base_path('.env.example'))) {
-            if (! copy(base_path('.env.example'), base_path('.env'))) {
+        if (file_exists($this->path('.env.example'))) {
+            if (! copy($this->path('.env.example'), $this->path('.env'))) {
                 $this->error('Failed to copy .env.example to .env. Check directory permissions.');
 
                 return false;
@@ -264,20 +266,21 @@ class InstallCommand extends Command
         return false;
     }
 
+    public function envHasAppKey(): bool
+    {
+        $env = @file_get_contents($this->path('.env'));
+
+        return $env !== false && preg_match('/^APP_KEY=base64:.+$/m', $env) === 1;
+    }
+
     protected function generateApplicationKey(): void
     {
         $this->components->task('Generating application key', function () {
-            $env = file_get_contents(base_path('.env'));
-
-            if ($env === false) {
-                return Artisan::call('key:generate', ['--force' => true]) === 0;
-            }
-
-            if (preg_match('/^APP_KEY=base64:.+$/m', $env)) {
+            if ($this->envHasAppKey()) {
                 return true;
             }
 
-            return Artisan::call('key:generate', ['--force' => true]) === 0;
+            return $this->runArtisan(['key:generate', '--force']);
         });
     }
 
@@ -289,7 +292,7 @@ class InstallCommand extends Command
         $ok = false;
 
         $this->components->task($label, function () use ($command, &$ok) {
-            return $ok = Artisan::call($command, ['--seed' => true, '--force' => true]) === 0;
+            return $ok = $this->runArtisan([$command, '--seed', '--force'], 300);
         });
 
         return $ok;
@@ -297,14 +300,24 @@ class InstallCommand extends Command
 
     protected function setupModules(): void
     {
+        $opt = $this->option('modules');
+
+        if ($opt === 'none') {
+            return;
+        }
+
         // Fast path: skip Packagist discovery when all requested names are fully qualified
-        if ($opt = $this->option('modules')) {
+        if ($opt) {
             $names = array_values(array_filter(array_map(fn ($n) => strtolower(trim($n)), explode(',', $opt))));
             if ($names && ! array_filter($names, fn ($n) => ! str_contains($n, '/'))) {
                 $this->doInstallModules($names);
 
                 return;
             }
+        }
+
+        if (! $opt && empty($this->selectedModules) && ! $this->option('all-modules')) {
+            return;
         }
 
         $available = $this->fetchAvailableModules();
@@ -331,7 +344,10 @@ class InstallCommand extends Command
         // Phase 1: require all selected packages in one Composer run
         $ok = false;
         $this->components->task('Installing modules', function () use ($selected, &$ok) {
-            $process = new Process(array_merge(['composer', 'require', '--no-interaction'], $selected));
+            $process = new Process(
+                array_merge(['composer', 'require', '--no-interaction'], $selected),
+                $this->targetPath(),
+            );
             $process->setTimeout(300);
             $process->run();
 
@@ -348,21 +364,9 @@ class InstallCommand extends Command
         $this->applyModulePatches($selected);
 
         // Phase 3: sync module configs, then migrate + seed each module individually
-        $this->components->task('Syncing modules', function () {
-            $process = new Process([PHP_BINARY, base_path('artisan'), 'modules:sync']);
-            $process->setTimeout(30);
-            $process->run();
+        $this->components->task('Syncing modules', fn () => $this->runArtisan(['modules:sync'], 30));
 
-            return $process->isSuccessful();
-        });
-
-        $this->components->task('Running module migrations', function () {
-            $process = new Process([PHP_BINARY, base_path('artisan'), 'migrate', '--force']);
-            $process->setTimeout(300);
-            $process->run();
-
-            return $process->isSuccessful();
-        });
+        $this->components->task('Running module migrations', fn () => $this->runArtisan(['migrate', '--force'], 300));
 
         foreach ($selected as $package) {
             $name = Str::after($package, '/');
@@ -372,11 +376,7 @@ class InstallCommand extends Command
             }
 
             $this->components->task("Seeding {$name}", function () use ($name) {
-                $process = new Process([PHP_BINARY, base_path('artisan'), 'db:seed', "--module={$name}", '--force']);
-                $process->setTimeout(60);
-                $process->run();
-
-                return $process->isSuccessful();
+                return $this->runArtisan(['db:seed', "--module={$name}", '--force'], 60);
             });
         }
     }
@@ -386,7 +386,7 @@ class InstallCommand extends Command
         $frameworks = ['vue', 'react', 'svelte'];
         $pattern = implode('|', array_map(fn ($f) => preg_quote($f, '#'), $frameworks));
         $extensions = ['vue', 'ts', 'tsx', 'js'];
-        $moduleDirs = glob(base_path('modules/*/resources/js'), GLOB_ONLYDIR) ?: [];
+        $moduleDirs = glob($this->path('modules/*/resources/js'), GLOB_ONLYDIR) ?: [];
 
         foreach ($moduleDirs as $jsRoot) {
             $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($jsRoot));
@@ -412,8 +412,8 @@ class InstallCommand extends Command
     {
         $seederFile = 'database/seeders/DatabaseSeeder.php';
 
-        return file_exists(base_path('modules/'.strtolower($name).'/'.$seederFile))
-            || file_exists(base_path('vendor/saucebase/'.strtolower($name).'/'.$seederFile));
+        return file_exists($this->path('modules/'.strtolower($name).'/'.$seederFile))
+            || file_exists($this->path('vendor/saucebase/'.strtolower($name).'/'.$seederFile));
     }
 
     public function applyModulePatches(array $modules): void
@@ -422,8 +422,8 @@ class InstallCommand extends Command
             $name = Str::after($package, '/');
 
             $dirs = array_filter([
-                base_path("vendor/saucebase/{$name}/patches"),
-                base_path("modules/{$name}/patches"),
+                $this->path("vendor/saucebase/{$name}/patches"),
+                $this->path("modules/{$name}/patches"),
             ], 'is_dir');
 
             foreach ($dirs as $dir) {
@@ -431,7 +431,7 @@ class InstallCommand extends Command
                     $label = basename($patch);
 
                     $check = new Process(['git', 'apply', '--check', '--whitespace=nowarn', $patch]);
-                    $check->setWorkingDirectory(base_path());
+                    $check->setWorkingDirectory($this->targetPath());
                     $check->run();
 
                     if (! $check->isSuccessful()) {
@@ -441,7 +441,7 @@ class InstallCommand extends Command
                     }
 
                     $apply = new Process(['git', 'apply', '--whitespace=nowarn', $patch]);
-                    $apply->setWorkingDirectory(base_path());
+                    $apply->setWorkingDirectory($this->targetPath());
                     $apply->run();
 
                     if ($apply->isSuccessful()) {
@@ -459,23 +459,7 @@ class InstallCommand extends Command
      */
     public function fetchAvailableModules(): array
     {
-        if (! empty($this->availableModules)) {
-            return $this->availableModules;
-        }
-
-        $response = Http::timeout(10)
-            ->get('https://packagist.org/packages/list.json?type=saucebase-module&fields[]=abandoned');
-
-        if (! $response->ok()) {
-            return [];
-        }
-
-        $packages = $response->json('packages', []);
-
-        return $this->availableModules = array_keys(array_filter(
-            $packages,
-            fn (array $p) => empty($p['abandoned'])
-        ));
+        return $this->registry()->available();
     }
 
     /**
@@ -512,16 +496,12 @@ class InstallCommand extends Command
 
     protected function createStorageLink(): void
     {
-        $this->components->task('Creating storage link', function () {
-            return Artisan::call('storage:link') === 0;
-        });
+        $this->components->task('Creating storage link', fn () => $this->runArtisan(['storage:link']));
     }
 
     protected function clearCaches(): void
     {
-        $this->components->task('Clearing caches', function () {
-            return Artisan::call('optimize:clear') === 0;
-        });
+        $this->components->task('Clearing caches', fn () => $this->runArtisan(['optimize:clear']));
     }
 
     protected function isCI(): bool
@@ -531,51 +511,6 @@ class InstallCommand extends Command
             || ! empty(getenv('GITLAB_CI'))
             || ! empty(getenv('CIRCLECI'))
             || ! empty(getenv('TRAVIS'));
-    }
-
-    protected function displayWelcome(): void
-    {
-        $primary = '#5455c4';
-        $secondary = '#26b9d9';
-        $split = 48;
-
-        $lines = [
-            '                                                888                                 ',
-            '                                                888                                 ',
-            '                                                888                                 ',
-            '    .d8888b   8888b.  888  888  .d8888b .d88b.  88888b.   8888b.  .d8888b   .d88b.  ',
-            '    88K          "88b 888  888 d88P"   d8P  Y8b 888 "88b     "88b 88K      d8P  Y8b ',
-            '    "Y8888b. .d888888 888  888 888     88888888 888  888 .d888888 "Y8888b. 88888888 ',
-            '         X88 888  888 Y88b 888 Y88b.   Y8b.     888 d88P 888  888      X88 Y8b.     ',
-            '     88888P\' "Y888888  "Y88888  "Y8888P "Y8888  88888P"  "Y888888  88888P\'  "Y8888  ',
-        ];
-
-        $this->newLine();
-
-        foreach ($lines as $line) {
-            $sauce = substr($line, 0, $split);
-            $base = substr($line, $split);
-            $this->line("<fg={$secondary}>{$sauce}</><fg={$primary}>{$base}</>");
-        }
-
-        $this->displayTagline();
-    }
-
-    protected function displayTagline(): void
-    {
-        $primary = '#5455c4';
-        $logoWidth = 84;
-        $slogan = 'With Saucebase • Your foundation is ready!';
-
-        $padding = '<fg=white;bg='.$primary.'>'.str_repeat(' ', $logoWidth).'</>';
-        $tagline = '<fg=white;bg='.$primary.';options=bold>'.mb_str_pad($slogan, $logoWidth, ' ', STR_PAD_BOTH).'</>';
-
-        $this->newLine(2);
-        $this->line($padding);
-        $this->line($tagline);
-        $this->line($padding);
-        $this->newLine();
-        $this->newLine();
     }
 
     public function displaySuccess(array $steps = []): void

@@ -309,7 +309,9 @@ class DockerEnvironmentTest extends TestCase
     public function test_generate_app_key_skips_when_key_already_set(): void
     {
         $spy = (object) ['execCalled' => false];
-        $envPath = base_path('.env');
+        $appDir = sys_get_temp_dir().'/sb-docker-test-'.uniqid();
+        mkdir($appDir, 0755, true);
+        $envPath = $appDir.'/.env';
         file_put_contents($envPath, "APP_KEY=base64:abc123==\n");
 
         try {
@@ -330,19 +332,22 @@ class DockerEnvironmentTest extends TestCase
                 }
             };
 
-            $result = $env->exposedGenerateAppKey(new FakeInstallCommand(null, [], []));
+            $result = $env->exposedGenerateAppKey(new FakeInstallCommand(null, [], ['path' => $appDir]));
 
             $this->assertTrue($result);
             $this->assertFalse($spy->execCalled, 'key:generate must not run when APP_KEY is already set');
         } finally {
             @unlink($envPath);
+            @rmdir($appDir);
         }
     }
 
     public function test_generate_app_key_runs_when_key_missing(): void
     {
         $spy = (object) ['execCalled' => false];
-        $envPath = base_path('.env');
+        $appDir = sys_get_temp_dir().'/sb-docker-test-'.uniqid();
+        mkdir($appDir, 0755, true);
+        $envPath = $appDir.'/.env';
         file_put_contents($envPath, "APP_NAME=Test\n");
 
         try {
@@ -363,11 +368,12 @@ class DockerEnvironmentTest extends TestCase
                 }
             };
 
-            $env->exposedGenerateAppKey(new FakeInstallCommand(null, [], []));
+            $env->exposedGenerateAppKey(new FakeInstallCommand(null, [], ['path' => $appDir]));
 
             $this->assertTrue($spy->execCalled, 'key:generate must run when APP_KEY is not set');
         } finally {
             @unlink($envPath);
+            @rmdir($appDir);
         }
     }
 

@@ -150,7 +150,7 @@ class InstallCommandTest extends TestCase
         $this->fakePackagistList();
         $spy = (object) ['stackCallCount' => 0];
 
-        app()->bind(InstallCommand::class, function () use ($spy) {
+        $this->bindCommand((function () use ($spy) {
             $cmd = new class extends InstallCommand
             {
                 public object $spy;
@@ -164,7 +164,7 @@ class InstallCommandTest extends TestCase
 
                 public function call($command, array $arguments = [], $outputBuffer = null): int
                 {
-                    if ($command === 'saucebase:stack') {
+                    if ($command === 'stack') {
                         $this->spy->stackCallCount++;
                     }
 
@@ -174,9 +174,9 @@ class InstallCommandTest extends TestCase
             $cmd->spy = $spy;
 
             return $cmd;
-        });
+        })());
 
-        $this->artisan('saucebase:install vue')->assertSuccessful();
+        $this->artisan('install vue')->assertSuccessful();
 
         $this->assertSame(0, $spy->stackCallCount, 'saucebase:stack must not fire during captureStack()');
     }
@@ -186,7 +186,7 @@ class InstallCommandTest extends TestCase
         $this->fakePackagistList();
         $spy = (object) ['stackCallCount' => 0];
 
-        app()->bind(InstallCommand::class, function () use ($spy) {
+        $this->bindCommand((function () use ($spy) {
             $cmd = new class extends InstallCommand
             {
                 public object $spy;
@@ -223,7 +223,7 @@ class InstallCommandTest extends TestCase
 
                 public function call($command, array $arguments = [], $outputBuffer = null): int
                 {
-                    if ($command === 'saucebase:stack') {
+                    if ($command === 'stack') {
                         $this->spy->stackCallCount++;
                     }
 
@@ -233,9 +233,9 @@ class InstallCommandTest extends TestCase
             $cmd->spy = $spy;
 
             return $cmd;
-        });
+        })());
 
-        $this->artisan('saucebase:install vue --all-modules')->assertSuccessful();
+        $this->artisan('install vue --all-modules')->assertSuccessful();
 
         $this->assertSame(1, $spy->stackCallCount, 'saucebase:stack must be called exactly once during install()');
     }
@@ -248,7 +248,7 @@ class InstallCommandTest extends TestCase
     {
         $spy = (object) ['selectCalled' => false];
 
-        app()->bind(InstallCommand::class, function () use ($spy) {
+        $this->bindCommand((function () use ($spy) {
             $cmd = new class extends InstallCommand
             {
                 public object $spy;
@@ -293,9 +293,9 @@ class InstallCommandTest extends TestCase
             $cmd->spy = $spy;
 
             return $cmd;
-        });
+        })());
 
-        $this->artisan('saucebase:install vue --driver=native --all-modules')->assertSuccessful();
+        $this->artisan('install vue --driver=native --all-modules')->assertSuccessful();
 
         $this->assertFalse($spy->selectCalled, '--driver=native must not reach the select() prompt');
     }
@@ -303,7 +303,7 @@ class InstallCommandTest extends TestCase
     public function test_driver_native_runs_install_without_prompting(): void
     {
 
-        app()->bind(InstallCommand::class, function () {
+        $this->bindCommand((function () {
             return new class extends InstallCommand
             {
                 protected function isCI(): bool
@@ -331,9 +331,9 @@ class InstallCommandTest extends TestCase
 
                 public function displaySuccess(array $steps = []): void {}
             };
-        });
+        })());
 
-        $this->artisan('saucebase:install vue --driver=native --all-modules')->assertSuccessful();
+        $this->artisan('install vue --driver=native --all-modules')->assertSuccessful();
     }
 
     // -------------------------------------------------------------------------
@@ -344,7 +344,7 @@ class InstallCommandTest extends TestCase
     {
         $spy = (object) ['runCalled' => false];
 
-        app()->bind(InstallCommand::class, function () use ($spy) {
+        $this->bindCommand((function () use ($spy) {
             return new class($spy) extends InstallCommand
             {
                 public function __construct(private object $spy)
@@ -399,9 +399,9 @@ class InstallCommandTest extends TestCase
                     };
                 }
             };
-        });
+        })());
 
-        $this->artisan('saucebase:install vue --all-modules')->assertFailed();
+        $this->artisan('install vue --all-modules')->assertFailed();
         $this->assertFalse($spy->runCalled, 'run() must not be called when prerequisites are not met');
     }
 
@@ -411,7 +411,7 @@ class InstallCommandTest extends TestCase
 
     public function test_ci_installation_returns_failure_when_env_file_missing(): void
     {
-        app()->bind(InstallCommand::class, function () {
+        $this->bindCommand((function () {
             return new class extends InstallCommand
             {
                 protected function isCI(): bool
@@ -424,9 +424,9 @@ class InstallCommandTest extends TestCase
                     return false;
                 }
             };
-        });
+        })());
 
-        $this->artisan('saucebase:install vue')->assertFailed();
+        $this->artisan('install vue')->assertFailed();
     }
 
     // -------------------------------------------------------------------------
@@ -437,7 +437,7 @@ class InstallCommandTest extends TestCase
     {
         $spy = (object) ['modulesSetupCalled' => false];
 
-        app()->bind(InstallCommand::class, function () use ($spy) {
+        $this->bindCommand((function () use ($spy) {
             $cmd = new class extends InstallCommand
             {
                 public object $spy;
@@ -483,9 +483,9 @@ class InstallCommandTest extends TestCase
             $cmd->spy = $spy;
 
             return $cmd;
-        });
+        })());
 
-        $this->artisan('saucebase:install vue --driver=native --all-modules')->assertFailed();
+        $this->artisan('install vue --driver=native --all-modules')->assertFailed();
         $this->assertFalse($spy->modulesSetupCalled, 'setupModules() must not run after a failed migration');
     }
 
@@ -581,22 +581,27 @@ class InstallCommandTest extends TestCase
     public function test_module_has_seeder_checks_vendor_path(): void
     {
         $name = 'sb-test-seeder-'.uniqid();
-        $vendorSeederDir = base_path("vendor/saucebase/{$name}/database/seeders");
+        $appDir = sys_get_temp_dir().'/sb-install-test-'.uniqid();
+        $vendorSeederDir = $appDir."/vendor/saucebase/{$name}/database/seeders";
         @mkdir($vendorSeederDir, 0755, true);
         file_put_contents($vendorSeederDir.'/DatabaseSeeder.php', '<?php');
 
         try {
             $cmd = new TestableInstallCommand;
+            $cmd->fakeOptions = ['path' => $appDir];
             $this->assertFalse(
-                file_exists(base_path("modules/{$name}/database/seeders/DatabaseSeeder.php")),
+                file_exists($appDir."/modules/{$name}/database/seeders/DatabaseSeeder.php"),
                 'modules/ path must not exist for this test to be valid'
             );
             $this->assertTrue($cmd->moduleHasSeeder($name), 'moduleHasSeeder() must detect seeder in vendor/saucebase/');
         } finally {
             @unlink($vendorSeederDir.'/DatabaseSeeder.php');
             @rmdir($vendorSeederDir);
-            @rmdir(base_path("vendor/saucebase/{$name}/database"));
-            @rmdir(base_path("vendor/saucebase/{$name}"));
+            @rmdir($appDir."/vendor/saucebase/{$name}/database");
+            @rmdir($appDir."/vendor/saucebase/{$name}");
+            @rmdir($appDir.'/vendor/saucebase');
+            @rmdir($appDir.'/vendor');
+            @rmdir($appDir);
         }
     }
 
@@ -665,7 +670,8 @@ class InstallCommandTest extends TestCase
 
     public function test_rewrite_cross_module_imports_strips_all_framework_segments(): void
     {
-        $jsRoot = base_path('modules/sb-test-rewrite/resources/js');
+        $appDir = sys_get_temp_dir().'/sb-install-test-'.uniqid();
+        $jsRoot = $appDir.'/modules/sb-test-rewrite/resources/js';
         @mkdir($jsRoot, 0755, true);
         file_put_contents($jsRoot.'/app.ts', implode("\n", [
             "import Foo from '@modules/other/resources/js/vue/components/Foo.vue';",
@@ -674,6 +680,7 @@ class InstallCommandTest extends TestCase
 
         try {
             $cmd = new TestableInstallCommand;
+            $cmd->fakeOptions = ['path' => $appDir];
             $cmd->rewriteCrossModuleImports();
 
             $result = file_get_contents($jsRoot.'/app.ts');
@@ -684,8 +691,10 @@ class InstallCommandTest extends TestCase
         } finally {
             @unlink($jsRoot.'/app.ts');
             @rmdir($jsRoot);
-            @rmdir(base_path('modules/sb-test-rewrite/resources'));
-            @rmdir(base_path('modules/sb-test-rewrite'));
+            @rmdir($appDir.'/modules/sb-test-rewrite/resources');
+            @rmdir($appDir.'/modules/sb-test-rewrite');
+            @rmdir($appDir.'/modules');
+            @rmdir($appDir);
         }
     }
 

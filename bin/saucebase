@@ -1,0 +1,18 @@
+#!/usr/bin/env php
+<?php
+
+if (isset($GLOBALS['_composer_autoload_path'])) {
+    require $GLOBALS['_composer_autoload_path'];
+} else {
+    foreach ([__DIR__.'/../../../autoload.php', __DIR__.'/../vendor/autoload.php'] as $autoload) {
+        if (file_exists($autoload)) {
+            require $autoload;
+            break;
+        }
+    }
+}
+
+$application = Saucebase\Installer\Console\Application::make();
+$application->setCatchExceptions(true);
+
+exit($application->run());

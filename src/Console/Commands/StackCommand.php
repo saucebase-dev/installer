@@ -10,11 +10,13 @@ use function Laravel\Prompts\select;
 
 class StackCommand extends Command
 {
-    protected $signature = 'saucebase:stack
+    protected $signature = 'stack
                             {stack? : The frontend stack to install (vue or react)}
+                            {--path= : The Saucebase application directory (defaults to the current directory)}
                             {--dev : Contributor dev mode — copy config files only, keep both source dirs}
                             {--reset : Reset to clean state with no framework selected}
-                            {--no-skip-worktree : Do not mark generated files as skip-worktree in git}';
+                            {--no-skip-worktree : Do not mark generated files as skip-worktree in git}
+                            {--no-install : Skip npm install after selecting the framework (dev mode)}';
 
     protected $description = 'Select the frontend framework stack (vue or react) for this Saucebase installation';
 
@@ -26,9 +28,9 @@ class StackCommand extends Command
 
     private const SUPPORTED = ['vue', 'react'];
 
-    private string $basePath;
+    private ?string $basePath;
 
-    private string $jsRoot;
+    private ?string $jsRoot;
 
     public function __construct(
         private readonly Filesystem $files,
@@ -36,12 +38,15 @@ class StackCommand extends Command
         ?string $jsRoot = null,
     ) {
         parent::__construct();
-        $this->basePath = $basePath ?? base_path();
-        $this->jsRoot = $jsRoot ?? resource_path('js');
+        $this->basePath = $basePath;
+        $this->jsRoot = $jsRoot;
     }
 
     public function handle(): int
     {
+        $this->basePath = $this->option('path') ?: ($this->basePath ?? getcwd());
+        $this->jsRoot ??= $this->basePath.'/resources/js';
+
         if ($this->option('reset')) {
             return $this->runReset();
         }
@@ -111,7 +116,7 @@ class StackCommand extends Command
         $current = $this->getSelectedFramework();
 
         if ($current !== null) {
-            $this->error("Framework already set to \"{$current}\". Run `php artisan saucebase:stack --reset` first.");
+            $this->error("Framework already set to \"{$current}\". Run `saucebase stack --reset` first.");
 
             return self::FAILURE;
         }
@@ -129,7 +134,10 @@ class StackCommand extends Command
 
         $this->writeFrontendJson($framework, dev: true);
         $this->skipGeneratedFiles($framework);
-        $this->runNpmInstall();
+
+        if (! $this->option('no-install')) {
+            $this->runNpmInstall();
+        }
 
         $this->info("Framework set to {$framework} (dev mode)");
 
