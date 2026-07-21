@@ -102,6 +102,38 @@ services:
             - '${FORWARD_MAILPIT_DASHBOARD_PORT:-8025}:8025'
         networks:
             - saucebase
+    queue:
+        build:
+            context: .
+            dockerfile: ./docker/Dockerfile
+        command: php artisan queue:work --tries=3 --backoff=5
+        volumes:
+            - './:/var/www'
+        networks:
+            - saucebase
+        environment:
+            - APP_ENV=${APP_ENV:-local}
+            - APP_KEY=${APP_KEY}
+            - APP_DEBUG=${APP_DEBUG:-true}
+            - DB_CONNECTION=${DB_CONNECTION:-mysql}
+            - DB_HOST=mysql
+            - DB_PORT=${DB_PORT:-3306}
+            - DB_DATABASE=${DB_DATABASE}
+            - DB_USERNAME=${DB_USERNAME}
+            - DB_PASSWORD=${DB_PASSWORD}
+            - REDIS_HOST=redis
+            - REDIS_PORT=${REDIS_PORT:-6379}
+            - CACHE_DRIVER=${CACHE_DRIVER:-redis}
+            - SESSION_DRIVER=${SESSION_DRIVER:-redis}
+            - QUEUE_CONNECTION=${QUEUE_CONNECTION:-redis}
+            - MAIL_HOST=${MAIL_HOST:-mailpit}
+            - MAIL_PORT=${MAIL_PORT:-1025}
+        depends_on:
+            mysql:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+        restart: unless-stopped
 
 networks:
     saucebase:
