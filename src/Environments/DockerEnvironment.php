@@ -2,7 +2,6 @@
 
 namespace Saucebase\Installer\Environments;
 
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Symfony\Component\Process\Process;
@@ -96,24 +95,49 @@ class DockerEnvironment extends Environment
 
     protected function promptForSsl(InstallCommand $command): void
     {
-        $this->ssl = $command->option('force')
-            ? true
-            : confirm(
+        $option = $command->option('ssl');
+
+        $this->ssl = match (true) {
+            $option !== null && $option !== '' => filter_var($option, FILTER_VALIDATE_BOOLEAN),
+            (bool) $command->option('force') => true,
+            default => confirm(
                 label: 'Enable HTTPS with SSL?',
                 default: true,
                 hint: 'Requires mkcert. Install with: brew install mkcert',
-            );
+            ),
+        };
     }
 
     protected function publishStubs(InstallCommand $command): void
     {
         $command->info('Publishing Docker stubs...');
-        Artisan::call('vendor:publish', ['--tag' => 'saucebase-docker', '--no-interaction' => true]);
+
+        $stubs = dirname(__DIR__, 2).'/stubs/docker';
+
+        foreach ([
+            'docker-compose.yml',
+            'docker/Dockerfile',
+            'docker/nginx.conf',
+            'docker/php.ini',
+            'docker/xdebug.ini',
+        ] as $file) {
+            $destination = $command->path($file);
+
+            if (file_exists($destination)) {
+                continue;
+            }
+
+            @mkdir(dirname($destination), 0755, true);
+
+            if (! copy($stubs.'/'.$file, $destination)) {
+                $command->warn("Failed to publish {$file}.");
+            }
+        }
 
         if (! $this->ssl) {
             $copied = copy(
-                __DIR__.'/../../../stubs/docker/docker/nginx-no-ssl.conf',
-                base_path('docker/nginx.conf'),
+                $stubs.'/docker/nginx-no-ssl.conf',
+                $command->path('docker/nginx.conf'),
             );
             if (! $copied) {
                 $command->warn('Failed to write nginx.conf (no-SSL). Check that Docker stubs were published first.');
@@ -127,8 +151,8 @@ class DockerEnvironment extends Environment
             return;
         }
 
-        $certFile = base_path('docker/ssl/app.pem');
-        $keyFile = base_path('docker/ssl/app.key.pem');
+        $certFile = $command->path('docker/ssl/app.pem');
+        $keyFile = $command->path('docker/ssl/app.key.pem');
 
         if (file_exists($certFile) && file_exists($keyFile)) {
             return;
@@ -156,11 +180,11 @@ class DockerEnvironment extends Environment
     {
         $command->info('Starting Docker services (this may take a few minutes while pulling images and starting containers)...');
 
-        $restart = new Process(['docker', 'compose', 'restart']);
+        $restart = new Process(['docker', 'compose', 'restart'], $command->targetPath());
         $restart->setTimeout(60);
         $restart->run();
 
-        $up = new Process(['docker', 'compose', 'up', '-d', '--wait', '--build']);
+        $up = new Process(['docker', 'compose', 'up', '-d', '--wait', '--build'], $command->targetPath());
         $up->setTimeout(30 * 60); // 30 minutes — first run pulls images + builds layers
         $up->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
         $command->newLine();
@@ -177,7 +201,7 @@ class DockerEnvironment extends Environment
     protected function runComposerInContainer(InstallCommand $command): bool
     {
         $command->info('Installing PHP dependencies...');
-        $process = new Process(['docker', 'compose', 'exec', '-T', 'app', 'composer', 'install']);
+        $process = new Process(['docker', 'compose', 'exec', '-T', 'app', 'composer', 'install'], $command->targetPath());
         $process->setTimeout(300);
         $process->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
 
@@ -190,7 +214,7 @@ class DockerEnvironment extends Environment
 
     protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
     {
-        $process = new Process(array_merge(['docker', 'compose', 'exec', '-T', 'app'], $args));
+        $process = new Process(array_merge(['docker', 'compose', 'exec', '-T', 'app'], $args), $command->targetPath());
         $process->setTimeout($timeout);
         $process->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
 
@@ -200,8 +224,8 @@ class DockerEnvironment extends Environment
     protected function generateAppKey(InstallCommand $command): bool
     {
         $command->info('Generating application key...');
-        $env = @file_get_contents(base_path('.env'));
-        if ($env !== false && preg_match('/^APP_KEY=base64:.+$/m', $env)) {
+
+        if ($command->envHasAppKey()) {
             return true;
         }
 
@@ -227,13 +251,10 @@ class DockerEnvironment extends Environment
         }
 
         $command->info("Setting up {$stack} stack...");
-        $args = ['php', 'artisan', 'saucebase:stack', $stack];
 
-        if ($command->option('dev')) {
-            $args[] = '--dev';
-        }
-
-        $this->execInContainer($command, $args);
+        // File operations on the host — the app directory is volume-mounted,
+        // and the stack command no longer exists inside the container.
+        $command->runStack();
     }
 
     protected function installModules(InstallCommand $command): bool
@@ -277,26 +298,13 @@ class DockerEnvironment extends Environment
 
     protected function nextSteps(InstallCommand $command): array
     {
-        $appUrl = $this->readEnvValue('APP_URL') ?? ($this->ssl ? 'https://localhost' : 'http://localhost');
+        $appUrl = $this->readEnvValue($command, 'APP_URL') ?? ($this->ssl ? 'https://localhost' : 'http://localhost');
 
         return [
             'Compile frontend assets: <fg=yellow>npm install && npm run dev</>',
             'Open your app: <fg=yellow>'.$appUrl.'</>',
             'Email testing (Mailpit): <fg=yellow>http://localhost:8025</>',
         ];
-    }
-
-    private function readEnvValue(string $key): ?string
-    {
-        $env = @file_get_contents(base_path('.env'));
-        if ($env === false) {
-            return null;
-        }
-        if (preg_match('/^'.preg_quote($key, '/').'=(.+)$/m', $env, $m)) {
-            return trim($m[1], "\"'");
-        }
-
-        return null;
     }
 
     protected function createStorageLink(InstallCommand $command): void
@@ -313,7 +321,7 @@ class DockerEnvironment extends Environment
 
     protected function setDockerEnvDefaults(InstallCommand $command): void
     {
-        $path = base_path('.env');
+        $path = $command->path('.env');
         $original = file_get_contents($path);
 
         if ($original === false) {

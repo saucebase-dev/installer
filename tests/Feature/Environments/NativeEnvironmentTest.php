@@ -65,8 +65,7 @@ class NativeEnvironmentTest extends TestCase
     {
         $spy = (object) ['installCalled' => false];
 
-        app()->bind(InstallCommand::class, function () use ($spy) {
-            return new class($spy) extends InstallCommand
+        $command = new class($spy) extends InstallCommand
             {
                 public function __construct(public object $spy) {}
 
@@ -81,10 +80,8 @@ class NativeEnvironmentTest extends TestCase
                     return Command::SUCCESS;
                 }
             };
-        });
 
         $env = new NativeEnvironment;
-        $command = app(InstallCommand::class);
         $result = $env->run($command);
 
         $this->assertTrue($spy->installCalled);
@@ -93,8 +90,7 @@ class NativeEnvironmentTest extends TestCase
 
     public function test_run_passes_through_failure_from_install(): void
     {
-        app()->bind(InstallCommand::class, function () {
-            return new class extends InstallCommand
+        $command = new class extends InstallCommand
             {
                 public function promptForModules(): void {}
 
@@ -105,10 +101,8 @@ class NativeEnvironmentTest extends TestCase
                     return Command::FAILURE;
                 }
             };
-        });
 
         $env = new NativeEnvironment;
-        $command = app(InstallCommand::class);
 
         $this->assertSame(Command::FAILURE, $env->run($command));
     }

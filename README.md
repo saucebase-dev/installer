@@ -2,131 +2,115 @@
 
 ![Tests](https://github.com/saucebase-dev/installer/actions/workflows/php.yml/badge.svg)
 ![PHP](https://img.shields.io/badge/PHP-%5E8.4-777BB4?logo=php&logoColor=white)
-![Laravel](https://img.shields.io/badge/Laravel-13-FF2D20?logo=laravel&logoColor=white)
 [![Saucebase](https://img.shields.io/packagist/v/saucebase/saucebase?color=5455c4&label=saucebase%2Fsaucebase)](https://packagist.org/packages/saucebase/saucebase)
 
-Dev-environment installer for [Saucebase](https://github.com/saucebase-dev/saucebase) applications.
+The official CLI for creating [Saucebase](https://github.com/saucebase-dev/saucebase) applications — a globally-installed Composer package, like `laravel/installer`.
 
-Provides two Artisan commands: `saucebase:install` bootstraps the entire dev environment (Docker, dependencies, database, frontend), and `saucebase:stack` switches the frontend framework after the environment is running.
+```bash
+composer global require saucebase/installer
+saucebase new my-app
+```
+
+`saucebase new` creates a new project and runs the full install flow (environment, database, frontend, modules) in one pass. No PHP yet? Use the one-command bootstrap at [install.saucebase.dev](https://install.saucebase.dev).
 
 ## Requirements
 
-- PHP ^8.4
-- Laravel ^13.0
+- PHP ^8.4 and Composer (the only universal prerequisites — same as Laravel itself)
+- **Docker driver:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine with the Compose plugin; [mkcert](https://github.com/FiloSottile/mkcert) only if you enable SSL
+- **Native driver:** a local PHP capable of running the app; the CLI points you to [php.new](https://php.new) if anything is missing
+
+The CLI **checks and instructs** for prerequisites — it never installs them for you.
 
 ## Installation
 
 ```bash
-composer require --dev saucebase/installer
+composer global require saucebase/installer
 ```
+
+Make sure Composer's global bin directory is on your `PATH` (`composer global config bin-dir --absolute`).
 
 ## Commands
 
-### `saucebase:install`
+### `saucebase new <name>`
 
-Bootstraps a new Saucebase dev environment from scratch.
+Creates a new Saucebase application and installs it end to end.
 
 ```bash
-php artisan saucebase:install
+saucebase new my-app
 ```
 
-Prompts for the frontend stack (Vue or React) and the environment driver (Docker or native PHP), then runs the full setup sequence.
-
-**Docker driver** (`--driver=docker`):
-
-1. Prompts whether to enable HTTPS via SSL (requires [mkcert](https://github.com/FiloSottile/mkcert))
-2. Publishes Docker config files (`docker-compose.yml`, `Dockerfile`, `nginx.conf`, etc.)
-3. Generates SSL certificates with mkcert (if SSL enabled)
-4. Patches `.env` with Docker-appropriate defaults — MySQL credentials, `MAIL_MAILER=smtp` for Mailpit, and `APP_URL` matching the SSL choice
-5. Starts `docker compose` and installs PHP dependencies inside the container
-6. Generates `APP_KEY`, runs migrations, wires up the frontend stack
-7. Installs any selected modules (single `composer require` for all → patches → `modules:sync` → `migrate` → `db:seed --module` per module)
-8. Creates the storage symlink and clears caches
-
-**Native driver** (`--driver=native`):
-
-1. Copies `.env.example` → `.env` and generates `APP_KEY`
-2. Runs migrations and seeds the database
-3. Wires up the selected frontend stack
-4. Installs any selected modules (same patch + migrate + seed flow as Docker)
-5. Creates the storage symlink and clears caches
-
-**Docker prerequisites**
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine with Compose plugin
-- [mkcert](https://github.com/FiloSottile/mkcert) — only if you choose SSL (`brew install mkcert`)
-- npm
+Runs a self-update check, then collects every choice upfront (driver → SSL if Docker → stack → modules) so the install runs unattended. It scaffolds the app via `laravel/installer` (using the `saucebase/saucebase` starter kit), then runs the full install flow against it. Your driver choice is remembered in `~/.config/saucebase/config.json` as the default for next time.
 
 **Options**
 
 | Option | Description |
 |--------|-------------|
-| `vue` / `react` | Frontend stack (positional argument — skips the prompt) |
 | `--driver=docker\|native` | Environment driver (skips the prompt) |
-| `--fresh` | Run `migrate:fresh` instead of `migrate` (destructive — wipes all data) |
-| `--all-modules` | Install every available module for the selected stack without prompting |
-| `--modules=auth,billing` | Install specific modules by name (comma-separated, short or full package name) |
-| `--dev` | Contributor mode — skips module installation |
-| `--force` | Skip confirmations (Docker driver defaults to SSL when forced) |
-| `--no-logo` | Suppress the welcome banner |
+| `--stack=vue\|react` | Frontend stack (skips the prompt) |
+| `--ssl=yes\|no` | Enable HTTPS via mkcert, Docker only (skips the prompt) |
+| `--modules=auth,billing` | Install specific modules by name, or `none` to skip modules |
+| `--all-modules` | Install every module compatible with the stack |
+| `--using=vendor/skeleton` | Use a different starter kit instead of `saucebase/saucebase` |
+| `--fresh` | Run `migrate:fresh` instead of `migrate` (destructive) |
+| `--force` | Overwrite an existing directory and skip confirmations |
+| `--dev` | Contributor mode (uses the skeleton's dev branch, skips modules) |
 
 **Examples**
 
-Fully interactive — prompts for stack, driver, SSL, and modules:
 ```bash
-php artisan saucebase:install
-```
+# Fully interactive
+saucebase new my-app
 
-Vue + Docker, fresh database, all compatible modules:
-```bash
-php artisan saucebase:install vue --driver=docker --fresh --all-modules
-```
+# Vue + Docker with SSL, all compatible modules
+saucebase new my-app --driver=docker --ssl=yes --stack=vue --all-modules
 
-React + native PHP, specific modules only:
-```bash
-php artisan saucebase:install react --driver=native --modules=auth,billing
+# React + native PHP, no modules
+saucebase new my-app --driver=native --stack=react --modules=none
 ```
 
 ---
 
-### `saucebase:stack`
+### `saucebase install`
 
-Selects or switches the frontend framework for an existing Saucebase installation.
+Runs the install flow against an **existing** Saucebase app. This is what `new` calls under the hood; run it standalone to (re)provision an app you already have.
 
 ```bash
-php artisan saucebase:stack vue
-php artisan saucebase:stack react
+cd my-app
+saucebase install
 ```
 
-Copies the framework-specific JS source files, config files (`package.json`, `vite.config.js`, `tsconfig.json`, `eslint.config.js`, `components.json`), lockfile, and blade layout into place, then removes the unused framework's source directory. Writes `frontend.json` to record the selection.
+Takes an optional `stack` argument (`vue`/`react`) and the same `--driver`, `--ssl`, `--modules`, `--fresh`, `--force` options as `new`, plus `--path` to target a directory other than the current one.
 
-> **Note:** Framework selection is permanent for a given installation. To switch, start a new project or use `--reset`.
+**Docker driver** — copies the Docker stubs (`docker-compose.yml`, `Dockerfile`, `nginx.conf`, …), generates SSL certs if enabled, patches `.env` with MySQL/Mailpit/`APP_URL` defaults, brings up `docker compose`, then generates `APP_KEY`, migrates, wires the frontend, and installs modules.
+
+**Native driver** — copies `.env.example` → `.env`, generates `APP_KEY`, migrates and seeds, wires the frontend, installs modules, and links storage.
+
+---
+
+### `saucebase stack <vue|react>`
+
+Selects or switches the frontend framework for an app.
+
+```bash
+saucebase stack vue
+saucebase stack react
+```
+
+Copies the framework-specific source, config (`package.json`, `vite.config.js`, `tsconfig.json`, …), lockfile, and blade layout into place, removes the unused framework's directory, and records the choice in `frontend.json`.
 
 **Options**
 
 | Option | Description |
 |--------|-------------|
-| `vue` / `react` | Framework to activate (positional argument) |
-| `--dev` | Contributor mode — copies config files only, keeps both framework source directories, runs `npm install` |
-| `--reset` | Reverts generated files to their pre-selection state (restores from git, deletes `package-lock.json`) |
-| `--no-skip-worktree` | Do not mark generated files as `skip-worktree` in git (dev mode only) |
+| `--path=<dir>` | Target app directory (defaults to the current directory) |
+| `--dev` | Contributor mode — config only, keeps both source dirs, uses git `skip-worktree`, runs `npm install` |
+| `--reset` | Reverts generated files to their pre-selection state |
 
-**Examples**
+> **Note:** Framework selection is permanent for a given installation. To switch, start a new project or use `--reset` (dev mode).
 
-Activate Vue (install mode — irreversible):
-```bash
-php artisan saucebase:stack vue
-```
+## How it works
 
-Activate React in contributor mode (keeps both source dirs):
-```bash
-php artisan saucebase:stack react --dev
-```
-
-Undo a previous `--dev` selection:
-```bash
-php artisan saucebase:stack --reset
-```
+`saucebase` is a standalone `Illuminate\Console\Application` (not a Laravel package — no service provider). It operates on a target directory via `--path`, running artisan steps as subprocesses (`php <path>/artisan …`). Project creation is delegated to `laravel/installer`; everything after — environment, database, frontend, modules — is the Saucebase install flow.
 
 ## License
 

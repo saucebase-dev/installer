@@ -6,6 +6,15 @@ use Saucebase\Installer\Console\Commands\InstallCommand;
 
 abstract class Environment
 {
+    public static function make(string $name): self
+    {
+        return match ($name) {
+            'docker' => new DockerEnvironment,
+            'native' => new NativeEnvironment,
+            default => throw new \InvalidArgumentException("Unknown driver: {$name}"),
+        };
+    }
+
     abstract public function name(): string;
 
     abstract public function label(): string;
@@ -50,6 +59,10 @@ abstract class Environment
         }
 
         if ($raw = $command->option('modules')) {
+            if ($raw === 'none') {
+                return [];
+            }
+
             return array_values(array_filter(array_map(function (string $name): string {
                 $name = strtolower(trim($name));
 
@@ -62,6 +75,24 @@ abstract class Environment
 
     /** @return string[] */
     abstract protected function nextSteps(InstallCommand $command): array;
+
+    protected function readEnvValue(InstallCommand $command, string $key): ?string
+    {
+        $env = @file_get_contents($command->path('.env'));
+        if ($env === false) {
+            return null;
+        }
+        if (preg_match('/^'.preg_quote($key, '/').'=(.+)$/m', $env, $m)) {
+            return trim($m[1], "\"'");
+        }
+
+        return null;
+    }
+
+    public function hasCommand(string $name): bool
+    {
+        return $this->commandExists($name);
+    }
 
     protected function commandExists(string $name): bool
     {

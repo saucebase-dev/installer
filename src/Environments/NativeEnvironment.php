@@ -36,7 +36,7 @@ class NativeEnvironment extends Environment
     {
         return [
             'Start the dev server: <fg=yellow>composer dev</>',
-            'Open your app: <fg=yellow>'.config('app.url').'</>',
+            'Open your app: <fg=yellow>'.($this->readEnvValue($command, 'APP_URL') ?? 'http://localhost').'</>',
         ];
     }
 }
