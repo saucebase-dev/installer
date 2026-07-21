@@ -18,6 +18,14 @@ class NewCommand extends Command
 {
     use DisplaysBanner;
 
+    /**
+     * Constraint used only when Packagist can't be reached to resolve the newest
+     * skeleton release. Must stay numeric — `@stable` does not override the
+     * `--stability=dev` that laravel/installer forces, so anything non-numeric
+     * silently installs dev-main. Bump this when the skeleton changes major.
+     */
+    private const SKELETON_FALLBACK = '^2.0';
+
     protected $signature = 'new
                             {name? : The name of the new Saucebase application}
                             {--driver= : Environment driver (docker, native) — prompted if omitted}
@@ -192,9 +200,14 @@ class NewCommand extends Command
             return $package;
         }
 
-        $major = (int) explode('.', ltrim(Application::version(), 'v'))[0];
+        // laravel/installer hardcodes --stability=dev when it shells out to
+        // `composer create-project`, so a bare package name resolves to dev-main.
+        // Verified: `@stable` does NOT override that flag — only a numeric
+        // constraint excludes the dev branch. So resolve the newest published
+        // release and pin it, rather than coupling to the installer's own major.
+        $latest = $this->latestVersion($package);
 
-        return $major > 0 ? "{$package}:^{$major}.0" : $package;
+        return "{$package}:".($latest ?? self::SKELETON_FALLBACK);
     }
 
     /**
@@ -276,16 +289,22 @@ class NewCommand extends Command
         return null;
     }
 
-    protected function latestVersion(): ?string
+    /**
+     * The newest published release of a package, or null when offline.
+     *
+     * Packagist's p2 endpoint lists tagged releases only (dev branches live in a
+     * separate ~dev.json), so index 0 is always the latest stable.
+     */
+    protected function latestVersion(string $package = 'saucebase/installer'): ?string
     {
         try {
-            $response = Http::timeout(2)->get('https://repo.packagist.org/p2/saucebase/installer.json');
+            $response = Http::timeout(2)->get("https://repo.packagist.org/p2/{$package}.json");
 
             if (! $response->ok()) {
                 return null;
             }
 
-            $version = $response->json('packages.saucebase/installer.0.version');
+            $version = $response->json("packages.{$package}.0.version");
 
             return is_string($version) ? ltrim($version, 'v') : null;
         } catch (\Throwable) {
