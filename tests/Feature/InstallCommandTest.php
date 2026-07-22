@@ -4,6 +4,7 @@ namespace Saucebase\Installer\Tests\Feature;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
+use Laravel\Prompts\Elements\NumberedList;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\NativeEnvironment;
@@ -611,34 +612,19 @@ class InstallCommandTest extends TestCase
 
     public function test_display_success_numbers_steps_sequentially(): void
     {
-        $cmd = new class extends TestableInstallCommand
-        {
-            public array $capturedLines = [];
+        $cmd = new TestableInstallCommand;
 
-            public function line($string, $style = null, $verbosity = null): void
-            {
-                $this->capturedLines[] = $string;
+        $content = $cmd->exposedSuccessCalloutContent([5 => 'first step', 10 => 'second step']);
+
+        $list = null;
+        foreach ($content as $part) {
+            if ($part instanceof NumberedList) {
+                $list = $part;
             }
+        }
 
-            public function info($string, $verbosity = null): void {}
-
-            public function newLine($count = 1): static
-            {
-                return $this;
-            }
-        };
-
-        $cmd->displaySuccess([5 => 'first step', 10 => 'second step']);
-
-        $stepLines = implode(' ', array_filter(
-            $cmd->capturedLines,
-            fn ($l) => (bool) preg_match('/\d+\./', $l),
-        ));
-
-        $this->assertStringContainsString('1. first step', $stepLines);
-        $this->assertStringContainsString('2. second step', $stepLines);
-        $this->assertStringNotContainsString('6. first step', $stepLines);
-        $this->assertStringNotContainsString('11. second step', $stepLines);
+        $this->assertNotNull($list);
+        $this->assertSame(['first step', 'second step'], $list->items);
     }
 
     // -------------------------------------------------------------------------
@@ -749,6 +735,11 @@ class TestableInstallCommand extends InstallCommand
     public function exposedFilterModulesByFramework(array $packages, string $framework): array
     {
         return $this->filterModulesByFramework($packages, $framework);
+    }
+
+    public function exposedSuccessCalloutContent(array $steps): array
+    {
+        return $this->successCalloutContent($steps);
     }
 
     /** @var array<string, bool|string|null> Fake option values for tests that bypass CLI input. */
