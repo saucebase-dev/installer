@@ -146,7 +146,7 @@ class InstallCommand extends Command
         if ($this->selectedStack) {
             $isDev = $this->option('dev') ? ['--dev' => true] : [];
             $this->call('stack', array_merge(
-                ['stack' => $this->selectedStack, '--path' => $this->targetPath()],
+                ['stack' => $this->selectedStack, '--path' => $this->targetPath(), '--no-hint' => true],
                 $isDev,
             ));
         }

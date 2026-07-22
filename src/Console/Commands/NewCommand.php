@@ -89,6 +89,8 @@ class NewCommand extends Command
             return self::FAILURE;
         }
 
+        $this->line('  Setup continues below - see the final summary for the real next steps.');
+
         $result = $this->call('install', $this->installArguments($name, $driver, $stack, $ssl, $modules));
 
         if ($result === self::SUCCESS) {
