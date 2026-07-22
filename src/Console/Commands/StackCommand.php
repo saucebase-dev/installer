@@ -16,7 +16,8 @@ class StackCommand extends Command
                             {--dev : Contributor dev mode — copy config files only, keep both source dirs}
                             {--reset : Reset to clean state with no framework selected}
                             {--no-skip-worktree : Do not mark generated files as skip-worktree in git}
-                            {--no-install : Skip npm install after selecting the framework (dev mode)}';
+                            {--no-install : Skip npm install after selecting the framework (dev mode)}
+                            {--no-hint : Suppress the npm install reminder (used when invoked from the install flow)}';
 
     protected $description = 'Select the frontend framework stack (vue or react) for this Saucebase installation';
 
@@ -106,7 +107,10 @@ class StackCommand extends Command
         $this->files->deleteDirectory($this->basePath.'/stubs/saucebase/stack');
         $this->deployModuleFiles($framework);
         $this->flattenRecipeStubs($framework);
-        $this->info("Framework set to {$framework}. Run: npm install to install dependencies.");
+
+        if (! $this->option('no-hint')) {
+            $this->info("Framework set to {$framework}. Run: npm install to install dependencies.");
+        }
 
         return self::SUCCESS;
     }
