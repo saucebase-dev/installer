@@ -106,4 +106,109 @@ class NativeEnvironmentTest extends TestCase
 
         $this->assertSame(Command::FAILURE, $env->run($command));
     }
+
+    // -------------------------------------------------------------------------
+    // cdStep — inherited from Environment
+    // -------------------------------------------------------------------------
+
+    private string $originalCwd;
+
+    private string $sandbox;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->originalCwd = getcwd();
+        $this->sandbox = sys_get_temp_dir().'/saucebase-env-test-'.uniqid();
+        mkdir($this->sandbox.'/sub/dir', recursive: true);
+        chdir($this->sandbox);
+    }
+
+    protected function tearDown(): void
+    {
+        chdir($this->originalCwd);
+        $this->removeDirectory($this->sandbox);
+        parent::tearDown();
+    }
+
+    private function envExposingCdStep(): object
+    {
+        return new class extends NativeEnvironment
+        {
+            public function exposedCdStep(InstallCommand $command): array
+            {
+                return $this->cdStep($command);
+            }
+        };
+    }
+
+    public function test_cd_step_is_empty_when_target_matches_cwd(): void
+    {
+        $command = new class extends InstallCommand
+        {
+            public function targetPath(): string
+            {
+                return getcwd();
+            }
+        };
+
+        $this->assertSame([], $this->envExposingCdStep()->exposedCdStep($command));
+    }
+
+    public function test_cd_step_resolves_nested_relative_target(): void
+    {
+        $command = new class extends InstallCommand
+        {
+            public function targetPath(): string
+            {
+                return './sub/../sub/dir';
+            }
+        };
+
+        $this->assertSame(
+            ['cd `'.realpath($this->sandbox.'/sub/dir').'`'],
+            $this->envExposingCdStep()->exposedCdStep($command),
+        );
+    }
+
+    public function test_cd_step_resolves_absolute_target_outside_cwd(): void
+    {
+        $elsewhere = sys_get_temp_dir().'/saucebase-env-test-elsewhere-'.uniqid();
+        mkdir($elsewhere, recursive: true);
+
+        $command = new class($elsewhere) extends InstallCommand
+        {
+            public function __construct(private string $elsewhere) {}
+
+            public function targetPath(): string
+            {
+                return $this->elsewhere;
+            }
+        };
+
+        $this->assertSame(
+            ['cd `'.realpath($elsewhere).'`'],
+            $this->envExposingCdStep()->exposedCdStep($command),
+        );
+
+        $this->removeDirectory($elsewhere);
+    }
+
+    private function removeDirectory(string $dir): void
+    {
+        if (! is_dir($dir)) {
+            return;
+        }
+
+        foreach (scandir($dir) as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            $path = $dir.'/'.$entry;
+            is_dir($path) ? $this->removeDirectory($path) : unlink($path);
+        }
+
+        rmdir($dir);
+    }
 }
