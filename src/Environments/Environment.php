@@ -33,10 +33,30 @@ abstract class Environment
         $result = $this->boot($command);
 
         if ($result === InstallCommand::SUCCESS) {
-            $command->displaySuccess($this->nextSteps($command));
+            $command->displaySuccess(array_merge($this->cdStep($command), $this->nextSteps($command)));
         }
 
         return $result;
+    }
+
+    /** @return string[] A `cd` step when the target app lives outside the current directory, empty otherwise. */
+    protected function cdStep(InstallCommand $command): array
+    {
+        $target = $this->normalizePath($command->targetPath());
+        $cwd = $this->normalizePath(getcwd());
+
+        if ($target === $cwd) {
+            return [];
+        }
+
+        return ['cd `'.$target.'`'];
+    }
+
+    private function normalizePath(string $path): string
+    {
+        $real = realpath($path);
+
+        return rtrim($real !== false ? $real : $path, '/');
     }
 
     /** Hook: perform driver-specific steps before the module prompt. Return an exit code to abort, null to continue. */

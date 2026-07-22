@@ -301,9 +301,9 @@ class DockerEnvironment extends Environment
         $appUrl = $this->readEnvValue($command, 'APP_URL') ?? ($this->ssl ? 'https://localhost' : 'http://localhost');
 
         return [
-            'Compile frontend assets: <fg=yellow>npm install && npm run dev</>',
-            'Open your app: <fg=yellow>'.$appUrl.'</>',
-            'Email testing (Mailpit): <fg=yellow>http://localhost:8025</>',
+            'Compile frontend assets: `npm install && npm run dev`',
+            'Open your app: `'.$appUrl.'`',
+            'Email testing (Mailpit): `http://localhost:8025`',
         ];
     }
 

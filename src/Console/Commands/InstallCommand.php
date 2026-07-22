@@ -4,11 +4,14 @@ namespace Saucebase\Installer\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
+use Laravel\Prompts\Elements\Element;
+use Laravel\Prompts\Elements\ElementContract;
 use Saucebase\Installer\Console\Commands\Concerns\DisplaysBanner;
 use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\ModuleRegistry;
 use Symfony\Component\Process\Process;
 
+use function Laravel\Prompts\callout;
 use function Laravel\Prompts\select;
 
 class InstallCommand extends Command
@@ -515,16 +518,16 @@ class InstallCommand extends Command
 
     public function displaySuccess(array $steps = []): void
     {
-        $this->newLine();
-        $this->info('Installation complete!');
-        $this->newLine();
-        if ($steps) {
-            $this->line('Next steps:');
-            foreach (array_values($steps) as $i => $step) {
-                $this->line('  '.($i + 1).'. '.$step);
-            }
-            $this->newLine();
-        }
-        $this->line('Learn more: <fg=cyan>https://github.com/saucebase-dev/saucebase</>');
+        callout(label: 'Installation complete', content: $this->successCalloutContent($steps));
+    }
+
+    /** @return array<int, string|ElementContract> */
+    protected function successCalloutContent(array $steps): array
+    {
+        return array_filter([
+            $steps ? 'You can start your local development using:' : null,
+            $steps ? Element::numberedList(array_values($steps)) : null,
+            'Learn more: '.Element::link('https://github.com/saucebase-dev/saucebase'),
+        ]);
     }
 }

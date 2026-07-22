@@ -35,9 +35,9 @@ class NativeEnvironment extends Environment
     protected function nextSteps(InstallCommand $command): array
     {
         return [
-            'Install frontend dependencies: <fg=yellow>npm install</>',
-            'Start the dev server: <fg=yellow>composer dev</>',
-            'Open your app: <fg=yellow>'.($this->readEnvValue($command, 'APP_URL') ?? 'http://localhost').'</>',
+            'Install frontend dependencies: `npm install`',
+            'Start the dev server: `composer dev`',
+            'Open your app: `'.($this->readEnvValue($command, 'APP_URL') ?? 'http://localhost').'`',
         ];
     }
 }
