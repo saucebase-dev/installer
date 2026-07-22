@@ -5,6 +5,7 @@ namespace Saucebase\Installer\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use Laravel\Prompts\Elements\Element;
+use Laravel\Prompts\Elements\ElementContract;
 use Saucebase\Installer\Console\Commands\Concerns\DisplaysBanner;
 use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\ModuleRegistry;
@@ -520,7 +521,7 @@ class InstallCommand extends Command
         callout(label: 'Installation complete', content: $this->successCalloutContent($steps));
     }
 
-    /** @return array<int, string|\Laravel\Prompts\Elements\ElementContract> */
+    /** @return array<int, string|ElementContract> */
     protected function successCalloutContent(array $steps): array
     {
         return array_filter([
