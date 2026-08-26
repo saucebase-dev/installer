@@ -44,10 +44,9 @@ class TestableInstallCommand extends InstallCommand
         return $this->successCalloutContent($steps);
     }
 
-    /** @param  array<string, string>  $resumeOptions */
-    public function exposedFailureCalloutContent(?string $step, array $resumeOptions): array
+    public function exposedFailureCalloutContent(?string $step): array
     {
-        return $this->failureCalloutContent($step, $resumeOptions);
+        return $this->failureCalloutContent($step);
     }
 
     public function exposedApplyIdentityToEnv(string $env, string $name, string $slug, string $host, bool $native): string

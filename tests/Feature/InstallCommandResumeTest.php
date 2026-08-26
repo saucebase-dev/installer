@@ -23,12 +23,12 @@ class InstallCommandResumeTest extends TestCase
     public function test_resume_command_bakes_in_every_answer_so_nothing_is_re_prompted(): void
     {
         $command = $this->command(
-            ['path' => '/tmp/whatsthere'],
+            ['path' => '/tmp/my-app-example'],
             modules: ['saucebase/auth', 'saucebase/billing'],
         );
 
         $this->assertSame(
-            'cd /tmp/whatsthere && saucebase install vue --driver=docker --ssl=yes --modules=saucebase/auth,saucebase/billing',
+            'cd /tmp/my-app-example && saucebase install vue --driver=docker --ssl=yes --modules=saucebase/auth,saucebase/billing',
             $command->resumeCommand(['--driver' => 'docker', '--ssl' => 'yes']),
         );
     }
@@ -86,25 +86,36 @@ class InstallCommandResumeTest extends TestCase
     public function test_resume_command_leaves_an_ordinary_path_unquoted(): void
     {
         $this->assertStringStartsWith(
-            'cd /tmp/whatsthere && ',
-            $this->command(['path' => '/tmp/whatsthere'])->resumeCommand(),
+            'cd /tmp/my-app-example && ',
+            $this->command(['path' => '/tmp/my-app-example'])->resumeCommand(),
         );
     }
 
-    public function test_failure_callout_names_the_step_and_the_resume_command(): void
+    public function test_failure_callout_names_the_step(): void
     {
-        $content = $this->command(['path' => '/tmp/whatsthere'])
-            ->exposedFailureCalloutContent('Starting Docker services', ['--driver' => 'docker']);
+        $content = $this->command(['path' => '/tmp/my-app-example'])
+            ->exposedFailureCalloutContent('Starting Docker services');
 
         $this->assertSame('Failed at: Starting Docker services', $content[0]);
         $this->assertStringContainsString('directory', implode(' ', $content));
-        $this->assertStringContainsString('cd /tmp/whatsthere && saucebase install vue --driver=docker', end($content));
     }
 
     public function test_failure_callout_omits_the_step_line_when_the_step_is_unknown(): void
     {
-        $content = $this->command(['path' => '/tmp/app'])->exposedFailureCalloutContent(null, []);
+        $content = $this->command(['path' => '/tmp/app'])->exposedFailureCalloutContent(null);
 
         $this->assertStringNotContainsString('Failed at:', implode(' ', $content));
+    }
+
+    public function test_the_resume_command_is_never_wrapped_inside_the_callout(): void
+    {
+        // Prompts hard-wraps callout content and the borders end up in the paste, so
+        // the command must be printed outside the box.
+        $content = $this->command(['path' => '/tmp/my-app-example'])
+            ->exposedFailureCalloutContent('Running migrations');
+
+        foreach ($content as $line) {
+            $this->assertStringNotContainsString('saucebase install', $line);
+        }
     }
 }

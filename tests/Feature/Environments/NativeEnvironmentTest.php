@@ -96,6 +96,9 @@ class NativeEnvironmentTest extends TestCase
 
             public function displaySuccess(array $steps = []): void {}
 
+            // The failure path prints the resume command; no output is bound here.
+            public function line($string, $style = null, $verbosity = null): void {}
+
             public function install(): int
             {
                 return Command::FAILURE;

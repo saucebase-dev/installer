@@ -109,6 +109,10 @@ class DockerEnvironment extends Environment
             return $this->fail('Generating application key');
         }
 
+        if (! $this->ensureDatabaseUser($command)) {
+            return $this->fail('Preparing the database user');
+        }
+
         if (! $this->runMigrations($command)) {
             return $this->fail('Running migrations');
         }
@@ -637,6 +641,67 @@ class DockerEnvironment extends Environment
         }
 
         return $this->execInContainer($command, ['php', 'artisan', 'key:generate', '--force']);
+    }
+
+    /**
+     * Create the database and user this app expects, if MySQL never did.
+     *
+     * MYSQL_USER / MYSQL_DATABASE are only honoured when MySQL initialises an *empty*
+     * data directory. A volume left over from an earlier install keeps whatever user it
+     * was first created with, so an app whose slug has since changed authenticates as a
+     * user that does not exist. Root still works (compose seeds MYSQL_ROOT_PASSWORD
+     * from DB_PASSWORD), so fix it up rather than making the user destroy the volume.
+     */
+    protected function ensureDatabaseUser(InstallCommand $command): bool
+    {
+        $database = (string) $command->envValue('DB_DATABASE');
+        $user = (string) $command->envValue('DB_USERNAME');
+        $password = (string) $command->envValue('DB_PASSWORD');
+
+        $sql = $this->databaseRepairSql($database, $user, $password);
+
+        if ($sql === null) {
+            return true;
+        }
+
+        $process = new Process(
+            ['docker', 'compose', 'exec', '-T', 'mysql', 'mysql', '-uroot', '-p'.$password, '-e', $sql],
+            $command->targetPath(),
+        );
+        $process->setTimeout(60);
+        $process->run();
+
+        if ($process->isSuccessful()) {
+            return true;
+        }
+
+        // Root did not work either, so the volume predates this password too.
+        $command->error("Could not prepare database user \"{$user}\".");
+        $command->line('  The MySQL volume was created with different credentials.');
+        $command->line('  Reset it (this destroys local database data):');
+        $command->line('    <fg=yellow>docker compose down -v && docker compose up -d</>');
+
+        return false;
+    }
+
+    /**
+     * The idempotent SQL that creates this app's database and user, or null when the
+     * names are not plain identifiers — those are the user's own arrangement, and
+     * interpolating them would be an injection.
+     */
+    protected function databaseRepairSql(string $database, string $user, string $password): ?string
+    {
+        if (preg_match('/^[A-Za-z0-9_-]+$/', $database) !== 1 || preg_match('/^[A-Za-z0-9_-]+$/', $user) !== 1) {
+            return null;
+        }
+
+        $quoted = str_replace("'", "''", $password);
+
+        return "CREATE DATABASE IF NOT EXISTS `{$database}`; "
+            ."CREATE USER IF NOT EXISTS '{$user}'@'%' IDENTIFIED BY '{$quoted}'; "
+            ."ALTER USER '{$user}'@'%' IDENTIFIED BY '{$quoted}'; "
+            ."GRANT ALL PRIVILEGES ON `{$database}`.* TO '{$user}'@'%'; "
+            .'FLUSH PRIVILEGES;';
     }
 
     protected function runMigrations(InstallCommand $command): bool

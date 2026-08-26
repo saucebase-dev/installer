@@ -180,7 +180,7 @@ class InstallCommand extends Command
     }
 
     /** Read a key straight out of the target app's .env, or null when absent. */
-    protected function envValue(string $key): ?string
+    public function envValue(string $key): ?string
     {
         $env = @file_get_contents($this->path('.env'));
 
@@ -733,20 +733,23 @@ class InstallCommand extends Command
     /** @param  array<string, string>  $resumeOptions */
     public function displayFailure(?string $step = null, array $resumeOptions = []): void
     {
-        callout(label: 'Installation did not finish', content: $this->failureCalloutContent($step, $resumeOptions));
+        callout(label: 'Installation did not finish', content: $this->failureCalloutContent($step));
+
+        // Printed outside the callout on purpose: Prompts hard-wraps box content to the
+        // terminal width, and a wrapped command carries the box borders into whatever
+        // the user pastes. This has to survive a copy-paste to be worth printing.
+        $this->line('');
+        $this->line($this->resumeCommand($resumeOptions));
+        $this->line('');
     }
 
-    /**
-     * @param  array<string, string>  $resumeOptions
-     * @return array<int, string>
-     */
-    protected function failureCalloutContent(?string $step, array $resumeOptions): array
+    /** @return array<int, string> */
+    protected function failureCalloutContent(?string $step): array
     {
         return array_values(array_filter([
             $step ? "Failed at: {$step}" : null,
             'Your application directory is intact — nothing was rolled back.',
-            'Fix the problem reported above, then resume with:',
-            '  '.$this->resumeCommand($resumeOptions),
+            'Fix the problem reported above, then resume with the command below.',
         ]));
     }
 

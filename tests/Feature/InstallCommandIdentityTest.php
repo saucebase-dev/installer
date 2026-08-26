@@ -31,9 +31,9 @@ class InstallCommandIdentityTest extends TestCase
 
     public function test_leaves_a_single_word_name_unquoted(): void
     {
-        $result = $this->apply("APP_NAME=Saucebase\n", dir: 'whatsthere');
+        $result = $this->apply("APP_NAME=Saucebase\n", dir: 'blog');
 
-        $this->assertStringContainsString('APP_NAME=Whatsthere', $result);
+        $this->assertStringContainsString('APP_NAME=Blog', $result);
         $this->assertStringNotContainsString('"', $result);
     }
 
