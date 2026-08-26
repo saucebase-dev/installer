@@ -6,6 +6,9 @@ use Saucebase\Installer\Console\Commands\InstallCommand;
 
 abstract class Environment
 {
+    /** Label of the step that failed, for the failure callout. Set via fail(). */
+    protected ?string $failedStep = null;
+
     public static function make(string $name): self
     {
         return match ($name) {
@@ -30,13 +33,46 @@ abstract class Environment
 
         $command->promptForModules();
 
+        // Only an explicit --modules= list reaches the installer unfiltered. The prompt
+        // and --all-modules paths already filter by framework, and checking them here
+        // would cost a needless Packagist round trip.
+        $explicit = $command->optionOrNull('modules');
+
+        if (is_string($explicit) && $explicit !== '' && $explicit !== 'none'
+            && ! $command->assertModulesSupportStack($this->resolveModules($command))) {
+            return $this->fail('Checking module compatibility');
+        }
+
         $result = $this->boot($command);
 
         if ($result === InstallCommand::SUCCESS) {
             $command->displaySuccess(array_merge($this->cdStep($command), $this->nextSteps($command)));
+        } else {
+            // Single exit point for every failing step in boot() — the install must
+            // never end silently, since the app directory already exists by now.
+            $command->displayFailure($this->failedStep, $this->resumeOptions());
         }
 
         return $result;
+    }
+
+    /** Record which step failed, then return FAILURE for boot() to propagate. */
+    protected function fail(string $step): int
+    {
+        $this->failedStep = $step;
+
+        return InstallCommand::FAILURE;
+    }
+
+    /**
+     * Resolved answers a resume run must carry, including ones that came from prompts
+     * rather than options.
+     *
+     * @return array<string, string>
+     */
+    protected function resumeOptions(): array
+    {
+        return ['--driver' => $this->name()];
     }
 
     /** @return string[] A `cd` step when the target app lives outside the current directory, empty otherwise. */

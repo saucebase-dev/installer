@@ -448,6 +448,138 @@ class DockerEnvironmentTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Port conflict detection
+    // -------------------------------------------------------------------------
+
+    /** Verbatim `docker ps` output from a machine running a conflicting Saucebase stack. */
+    private const DOCKER_PS = <<<'OUTPUT'
+        |whatsthere-queue-1|whatsthere
+        9000/tcp|whatsthere-app-1|whatsthere
+        0.0.0.0:6379->6379/tcp, [::]:6379->6379/tcp|whatsthere-redis-1|whatsthere
+        0.0.0.0:3306->3306/tcp, [::]:3306->3306/tcp|whatsthere-mysql-1|whatsthere
+        0.0.0.0:1025->1025/tcp, [::]:1025->1025/tcp, 0.0.0.0:8025->8025/tcp, [::]:8025->8025/tcp|whatsthere-mailpit-1|whatsthere
+        OUTPUT;
+
+    public function test_parses_published_ports_to_their_owning_compose_project(): void
+    {
+        $owners = $this->exposed()->exposedParseDockerPortOwners(self::DOCKER_PS);
+
+        $this->assertSame(['container' => 'whatsthere-redis-1', 'project' => 'whatsthere'], $owners[6379]);
+        $this->assertSame(['container' => 'whatsthere-mysql-1', 'project' => 'whatsthere'], $owners[3306]);
+        // One container can publish several ports.
+        $this->assertSame(['container' => 'whatsthere-mailpit-1', 'project' => 'whatsthere'], $owners[1025]);
+        $this->assertSame(['container' => 'whatsthere-mailpit-1', 'project' => 'whatsthere'], $owners[8025]);
+        $this->assertCount(4, $owners);
+    }
+
+    public function test_ignores_exposed_but_unpublished_container_ports(): void
+    {
+        $owners = $this->exposed()->exposedParseDockerPortOwners(self::DOCKER_PS);
+
+        // "9000/tcp" is exposed to the container network only — it binds no host port.
+        $this->assertArrayNotHasKey(9000, $owners);
+    }
+
+    public function test_parses_a_standalone_container_as_having_no_project(): void
+    {
+        $owners = $this->exposed()->exposedParseDockerPortOwners("0.0.0.0:6379->6379/tcp|my-redis|\n");
+
+        $this->assertSame(['container' => 'my-redis', 'project' => null], $owners[6379]);
+    }
+
+    public function test_parses_empty_docker_output_to_no_owners(): void
+    {
+        $this->assertSame([], $this->exposed()->exposedParseDockerPortOwners(''));
+        $this->assertSame([], $this->exposed()->exposedParseDockerPortOwners("\n  \n"));
+    }
+
+    public function test_free_port_skips_ports_in_use_and_ports_already_assigned(): void
+    {
+        $env = $this->exposed(inUse: [3307, 3308]);
+
+        $this->assertSame(3310, $env->exposedFreePort(3307, taken: [3309]));
+    }
+
+    public function test_free_port_returns_zero_when_the_scan_window_is_exhausted(): void
+    {
+        $env = $this->exposed(inUse: range(8080, 8300));
+
+        $this->assertSame(0, $env->exposedFreePort(8080));
+    }
+
+    public function test_check_ports_passes_without_querying_docker_when_nothing_conflicts(): void
+    {
+        $env = $this->exposed(inUse: []);
+
+        $this->assertTrue($env->exposedCheckPorts(new FakeInstallCommand(null, [], ['path' => '/nonexistent'])));
+        $this->assertFalse($env->dockerQueried, 'docker ps must not run when no port conflicts');
+    }
+
+    public function test_check_ports_picks_free_alternatives_under_force_without_prompting(): void
+    {
+        // The reported real-world clash: another stack holding MySQL, Redis and Mailpit.
+        $env = $this->exposed(inUse: [3306, 6379, 1025, 8025]);
+
+        $result = $env->exposedCheckPorts(new FakeInstallCommand(null, [], ['path' => '/nonexistent', 'force' => true]));
+
+        $this->assertTrue($result);
+        $this->assertSame([
+            'FORWARD_DB_PORT' => 3307,
+            'FORWARD_REDIS_PORT' => 6380,
+            'FORWARD_MAILPIT_PORT' => 1026,
+            'FORWARD_MAILPIT_DASHBOARD_PORT' => 8026,
+        ], $env->exposedPortOverrides());
+        $this->assertTrue($env->envRewritten, 'the .env writer must re-run so overrides are persisted');
+        // Free ports are left alone.
+        $this->assertArrayNotHasKey('APP_PORT', $env->exposedPortOverrides());
+    }
+
+    public function test_a_resumed_install_does_not_treat_its_own_containers_as_conflicts(): void
+    {
+        // Resuming after a mid-install failure: our own stack is up and holding the
+        // ports. Remapping them here would move the whole app on every retry.
+        $env = $this->exposed(
+            inUse: [3306, 6379],
+            owners: [
+                3306 => ['container' => 'my-app-mysql-1', 'project' => 'my-app'],
+                6379 => ['container' => 'my-app-redis-1', 'project' => 'my-app'],
+            ],
+        );
+        $env->fakeOwnContainers = ['my-app-mysql-1', 'my-app-redis-1', 'my-app-app-1'];
+
+        $result = $env->exposedCheckPorts(new FakeInstallCommand(null, [], ['path' => '/nonexistent', 'force' => true]));
+
+        $this->assertTrue($result);
+        $this->assertSame([], $env->exposedPortOverrides(), 'a resume must not remap its own ports');
+    }
+
+    public function test_a_foreign_stack_is_still_a_conflict_when_our_own_containers_run(): void
+    {
+        $env = $this->exposed(
+            inUse: [3306, 6379],
+            owners: [
+                3306 => ['container' => 'my-app-mysql-1', 'project' => 'my-app'],
+                6379 => ['container' => 'other-redis-1', 'project' => 'other'],
+            ],
+        );
+        $env->fakeOwnContainers = ['my-app-mysql-1'];
+
+        $env->exposedCheckPorts(new FakeInstallCommand(null, [], ['path' => '/nonexistent', 'force' => true]));
+
+        // Ours is ignored, the foreign one is remapped.
+        $this->assertSame(['FORWARD_REDIS_PORT' => 6380], $env->exposedPortOverrides());
+    }
+
+    public function test_check_ports_does_not_offer_to_stop_docker_when_a_plain_process_holds_a_port(): void
+    {
+        $env = $this->exposed(inUse: [6379, 8025], owners: [6379 => ['container' => 'other-redis', 'project' => 'other']]);
+        $env->exposedCheckPorts(new FakeInstallCommand(null, [], ['path' => '/nonexistent', 'force' => true]));
+
+        // 8025 has no Docker owner, so stopping "other" would not unblock the install.
+        $this->assertSame([], $env->exposedStoppableTargets(['a' => 6379, 'b' => 8025], $env->fakeOwners));
+    }
+
+    // -------------------------------------------------------------------------
     // applyDockerEnvDefaults
     // -------------------------------------------------------------------------
 
@@ -590,6 +722,115 @@ class DockerEnvironmentTest extends TestCase
         $this->assertStringContainsString('APP_URL=https://myapp.test', $this->applyDefaults($input, ssl: false));
     }
 
+    public function test_port_overrides_are_written_to_env(): void
+    {
+        $result = $this->applyDefaults("APP_NAME=Test\n", ports: ['FORWARD_DB_PORT' => 3307, 'APP_PORT' => 8080]);
+
+        $this->assertStringContainsString('FORWARD_DB_PORT=3307', $result);
+        $this->assertStringContainsString('APP_PORT=8080', $result);
+    }
+
+    public function test_port_overrides_replace_the_value_that_clashed(): void
+    {
+        // Unlike the DB defaults, an existing port value must NOT be respected —
+        // it is precisely the one that was found to be in use.
+        $result = $this->applyDefaults("FORWARD_REDIS_PORT=6379\n", ports: ['FORWARD_REDIS_PORT' => 6380]);
+
+        $this->assertStringContainsString('FORWARD_REDIS_PORT=6380', $result);
+        $this->assertStringNotContainsString('FORWARD_REDIS_PORT=6379', $result);
+    }
+
+    public function test_app_url_carries_a_non_default_https_port(): void
+    {
+        $result = $this->applyDefaults("APP_URL=https://localhost\n", ssl: true, ports: ['APP_HTTPS_PORT' => 8443]);
+
+        $this->assertStringContainsString('APP_URL=https://localhost:8443', $result);
+    }
+
+    public function test_app_url_carries_a_non_default_http_port_when_ssl_is_disabled(): void
+    {
+        $result = $this->applyDefaults("APP_URL=http://localhost\n", ssl: false, ports: ['APP_PORT' => 8080]);
+
+        $this->assertStringContainsString('APP_URL=http://localhost:8080', $result);
+    }
+
+    public function test_app_url_stays_bare_when_the_port_is_the_scheme_default(): void
+    {
+        $result = $this->applyDefaults("APP_URL=https://localhost\n", ssl: true, ports: ['APP_HTTPS_PORT' => 443]);
+
+        $this->assertStringContainsString('APP_URL=https://localhost'."\n", $result);
+    }
+
+    public function test_a_previously_ported_app_url_is_rewritten_to_the_new_port(): void
+    {
+        // The second pass over .env must correct a port this installer wrote earlier.
+        $result = $this->applyDefaults("APP_URL=https://localhost:8443\n", ssl: true, ports: ['APP_HTTPS_PORT' => 8444]);
+
+        $this->assertStringContainsString('APP_URL=https://localhost:8444', $result);
+        $this->assertStringNotContainsString('8443', $result);
+    }
+
+    public function test_a_custom_app_url_is_left_alone_even_with_port_overrides(): void
+    {
+        $result = $this->applyDefaults("APP_URL=https://myapp.test\n", ssl: true, ports: ['APP_HTTPS_PORT' => 8443]);
+
+        $this->assertStringContainsString('APP_URL=https://myapp.test', $result);
+    }
+
+    // -------------------------------------------------------------------------
+    // Custom domain
+    // -------------------------------------------------------------------------
+
+    public function test_app_url_is_built_from_app_host(): void
+    {
+        $result = $this->applyDefaults("APP_HOST=myapp.test\nAPP_URL=http://localhost\n", ssl: true);
+
+        $this->assertStringContainsString('APP_URL=https://myapp.test', $result);
+    }
+
+    public function test_app_url_combines_a_custom_host_with_a_remapped_port(): void
+    {
+        $result = $this->applyDefaults(
+            "APP_HOST=myapp.test\nAPP_URL=http://localhost\n",
+            ssl: true,
+            ports: ['APP_HTTPS_PORT' => 8443],
+        );
+
+        $this->assertStringContainsString('APP_URL=https://myapp.test:8443', $result);
+    }
+
+    public function test_a_stale_url_for_the_chosen_host_is_corrected(): void
+    {
+        // Re-run after the port moved: same host, so the scheme/port must be refreshed.
+        $result = $this->applyDefaults(
+            "APP_HOST=myapp.test\nAPP_URL=http://myapp.test:8080\n",
+            ssl: true,
+            ports: ['APP_HTTPS_PORT' => 8443],
+        );
+
+        $this->assertStringContainsString('APP_URL=https://myapp.test:8443', $result);
+    }
+
+    public function test_a_port_persisted_by_an_earlier_run_survives_a_resume(): void
+    {
+        // Resume: the port keys are already in .env and nothing is overridden this
+        // run, so the URL must keep :8443 instead of falling back to 443.
+        $result = $this->applyDefaults(
+            "APP_HOST=myapp.test\nAPP_HTTPS_PORT=8443\nAPP_URL=https://myapp.test:8443\n",
+            ssl: true,
+            ports: [],
+        );
+
+        $this->assertStringContainsString('APP_URL=https://myapp.test:8443', $result);
+    }
+
+    public function test_a_url_for_an_unrelated_host_is_still_left_alone(): void
+    {
+        $result = $this->applyDefaults("APP_HOST=myapp.test\nAPP_URL=https://staging.example.com\n", ssl: true);
+
+        $this->assertStringContainsString('APP_URL=https://staging.example.com', $result);
+    }
+
     public function test_real_env_example_pattern_produces_valid_docker_env(): void
     {
         $input = implode("\n", [
@@ -616,20 +857,283 @@ class DockerEnvironmentTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
-    // Helpers
+    // nginx + certificates for a custom domain
     // -------------------------------------------------------------------------
 
-    private function applyDefaults(string $env, bool $ssl = true): string
+    /** The real published stub, so the substitutions are tested against what ships. */
+    private function nginxStub(): string
     {
-        $exposed = new class extends DockerEnvironment
+        return file_get_contents(dirname(__DIR__, 3).'/stubs/docker/docker/nginx.conf');
+    }
+
+    public function test_nginx_serves_the_custom_domain_first_then_localhost(): void
+    {
+        $result = $this->exposed()->exposedApplyNginxSettings($this->nginxStub(), 'myapp.test', 80, 443);
+
+        // Primary name first: the HTTP block redirects using $server_name.
+        $this->assertStringContainsString('server_name myapp.test localhost;', $result);
+        $this->assertStringNotContainsString('server_name localhost;', $result);
+    }
+
+    public function test_nginx_is_untouched_for_a_localhost_install(): void
+    {
+        $stub = $this->nginxStub();
+
+        $this->assertSame($stub, $this->exposed()->exposedApplyNginxSettings($stub, 'localhost', 80, 443));
+    }
+
+    public function test_nginx_follows_a_domain_change_on_a_re_run(): void
+    {
+        $env = $this->exposed();
+
+        // publishStubs() skips an existing file, so this rewrite is the only thing
+        // that keeps a re-installed app's nginx.conf in step with a new domain.
+        $first = $env->exposedApplyNginxSettings($this->nginxStub(), 'old.test', 80, 443);
+        $second = $env->exposedApplyNginxSettings($first, 'new.test', 80, 443);
+
+        $this->assertStringContainsString('server_name new.test localhost;', $second);
+        $this->assertStringNotContainsString('old.test', $second);
+    }
+
+    public function test_nginx_reports_the_port_actually_published(): void
+    {
+        // Without this, a stack moved to 8443 by the port check still tells PHP 443
+        // and Laravel generates URLs on the wrong port.
+        $result = $this->exposed()->exposedApplyNginxSettings($this->nginxStub(), 'localhost', 8080, 8443);
+
+        $this->assertStringContainsString('fastcgi_param SERVER_PORT 8443;', $result);
+        $this->assertStringNotContainsString('SERVER_PORT 443;', $result);
+    }
+
+    public function test_nginx_no_ssl_stub_gets_the_http_port(): void
+    {
+        $stub = file_get_contents(dirname(__DIR__, 3).'/stubs/docker/docker/nginx-no-ssl.conf');
+        $result = $this->exposed()->exposedApplyNginxSettings($stub, 'localhost', 8080, 8443);
+
+        $this->assertStringContainsString('fastcgi_param SERVER_PORT 8080;', $result);
+    }
+
+    public function test_nginx_leaves_a_user_added_vhost_alone(): void
+    {
+        $conf = $this->nginxStub()."\n".implode("\n", [
+            'server {',
+            '    listen 8080;',
+            '    server_name shop.example.com;',
+            '}',
+        ]);
+
+        $result = $this->exposed()->exposedApplyNginxSettings($conf, 'myapp.test', 80, 443);
+
+        // Only the installer's own blocks (which always name localhost) are rewritten.
+        $this->assertStringContainsString('server_name shop.example.com;', $result);
+        $this->assertStringContainsString('server_name myapp.test localhost;', $result);
+    }
+
+    public function test_nginx_redirect_carries_a_remapped_https_port(): void
+    {
+        $result = $this->exposed()->exposedApplyNginxSettings($this->nginxStub(), 'myapp.test', 8080, 8443);
+
+        // $server_name has no port, so the redirect would otherwise land on 443.
+        $this->assertStringContainsString('https://$server_name:8443$request_uri', $result);
+    }
+
+    public function test_nginx_redirect_stays_bare_on_the_default_port(): void
+    {
+        $result = $this->exposed()->exposedApplyNginxSettings($this->nginxStub(), 'myapp.test', 80, 443);
+
+        $this->assertStringContainsString('https://$server_name$request_uri', $result);
+        $this->assertStringNotContainsString('$server_name:', $result);
+    }
+
+    public function test_nginx_redirect_is_retargeted_on_a_re_run(): void
+    {
+        $first = $this->exposed()->exposedApplyNginxSettings($this->nginxStub(), 'myapp.test', 8080, 8443);
+        $second = $this->exposed()->exposedApplyNginxSettings($first, 'myapp.test', 80, 443);
+
+        $this->assertStringContainsString('https://$server_name$request_uri', $second);
+        $this->assertStringNotContainsString('8443', $second);
+    }
+
+    public function test_certificate_covers_the_custom_domain_and_localhost(): void
+    {
+        $hosts = $this->exposed()->exposedCertificateHosts('myapp.test');
+
+        $this->assertContains('myapp.test', $hosts);
+        $this->assertContains('*.myapp.test', $hosts);
+        $this->assertContains('localhost', $hosts);
+    }
+
+    public function test_certificate_hosts_do_not_repeat_localhost(): void
+    {
+        $hosts = $this->exposed()->exposedCertificateHosts('localhost');
+
+        $this->assertSame(array_unique($hosts), $hosts);
+        $this->assertSame(['localhost', '*.localhost', '127.0.0.1', '::1'], $hosts);
+    }
+
+    // -------------------------------------------------------------------------
+    // Failure messaging
+    // -------------------------------------------------------------------------
+
+    public function test_run_reports_the_failed_step_and_a_resume_command(): void
+    {
+        $env = new class extends DockerEnvironment
         {
-            public function applyDockerEnvDefaults(string $env, bool $ssl = true): string
+            protected function beforePrompts(InstallCommand $command): ?int
             {
-                return parent::applyDockerEnvDefaults($env, $ssl);
+                return null;
+            }
+
+            protected function publishStubs(InstallCommand $command): void {}
+
+            protected function generateSsl(InstallCommand $command): void {}
+
+            protected function setDockerEnvDefaults(InstallCommand $command): void {}
+
+            protected function checkPorts(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function startDocker(InstallCommand $command): bool
+            {
+                return false;
             }
         };
 
-        return $exposed->applyDockerEnvDefaults($env, $ssl);
+        $command = new class extends FakeInstallCommand
+        {
+            public ?string $failedStep = null;
+
+            public array $resumeOptions = [];
+
+            public function __construct()
+            {
+                parent::__construct(null, [], []);
+            }
+
+            public function ensureEnvFile(): bool
+            {
+                return true;
+            }
+
+            public function promptForModules(): void {}
+
+            public function displayFailure(?string $step = null, array $resumeOptions = []): void
+            {
+                $this->failedStep = $step;
+                $this->resumeOptions = $resumeOptions;
+            }
+        };
+
+        $this->assertSame(Command::FAILURE, $env->run($command));
+        $this->assertSame('Starting Docker services', $command->failedStep);
+        // A resume must not re-prompt for the driver or SSL.
+        $this->assertSame(['--driver' => 'docker', '--ssl' => 'yes'], $command->resumeOptions);
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * A DockerEnvironment with the network probes stubbed out, exposing the pure logic.
+     *
+     * @param  int[]  $inUse
+     * @param  array<int, array{container: string, project: string|null}>  $owners
+     */
+    private function exposed(array $inUse = [], array $owners = []): object
+    {
+        return new class($inUse, $owners) extends DockerEnvironment
+        {
+            public bool $dockerQueried = false;
+
+            public bool $envRewritten = false;
+
+            /** @param  int[]  $inUse */
+            public function __construct(private array $inUse, public array $fakeOwners) {}
+
+            protected function portInUse(int $port): bool
+            {
+                return in_array($port, $this->inUse, true);
+            }
+
+            protected function dockerPortOwners(): array
+            {
+                $this->dockerQueried = true;
+
+                return $this->fakeOwners;
+            }
+
+            /** @var string[] Containers this app's own Compose project is running. */
+            public array $fakeOwnContainers = [];
+
+            protected function ownContainers(InstallCommand $command): array
+            {
+                return $this->fakeOwnContainers;
+            }
+
+            protected function setDockerEnvDefaults(InstallCommand $command): void
+            {
+                $this->envRewritten = true;
+            }
+
+            public function exposedParseDockerPortOwners(string $psOutput): array
+            {
+                return $this->parseDockerPortOwners($psOutput);
+            }
+
+            /** @param  int[]  $taken */
+            public function exposedFreePort(int $base, array $taken = []): int
+            {
+                return $this->freePort($base, $taken);
+            }
+
+            public function exposedCheckPorts(InstallCommand $command): bool
+            {
+                return $this->checkPorts($command);
+            }
+
+            public function exposedStoppableTargets(array $conflicts, array $owners): array
+            {
+                return $this->stoppableTargets($conflicts, $owners);
+            }
+
+            /** @return array<string, int> */
+            public function exposedPortOverrides(): array
+            {
+                return $this->portOverrides;
+            }
+
+            public function exposedApplyNginxSettings(string $conf, string $host, int $http, int $https): string
+            {
+                return $this->applyNginxSettings($conf, $host, $http, $https);
+            }
+
+            /** @return string[] */
+            public function exposedCertificateHosts(string $host): array
+            {
+                return $this->certificateHosts($host);
+            }
+
+            public function exposedCertCoversHost(string $certFile, string $host): bool
+            {
+                return $this->certCoversHost($certFile, $host);
+            }
+        };
+    }
+
+    private function applyDefaults(string $env, bool $ssl = true, array $ports = []): string
+    {
+        $exposed = new class extends DockerEnvironment
+        {
+            public function applyDockerEnvDefaults(string $env, bool $ssl = true, array $ports = []): string
+            {
+                return parent::applyDockerEnvDefaults($env, $ssl, $ports);
+            }
+        };
+
+        return $exposed->applyDockerEnvDefaults($env, $ssl, $ports);
     }
 
     /**
