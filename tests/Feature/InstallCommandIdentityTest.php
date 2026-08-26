@@ -2,6 +2,7 @@
 
 namespace Saucebase\Installer\Tests\Feature;
 
+use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Tests\TestCase;
 
@@ -13,8 +14,8 @@ class InstallCommandIdentityTest extends TestCase
 
         return $command->exposedApplyIdentityToEnv(
             $env,
-            \Illuminate\Support\Str::headline($dir),
-            \Illuminate\Support\Str::slug($dir),
+            Str::headline($dir),
+            Str::slug($dir),
             $host,
             $native,
         );
