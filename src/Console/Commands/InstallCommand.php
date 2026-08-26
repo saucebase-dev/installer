@@ -13,6 +13,7 @@ use Symfony\Component\Process\Process;
 
 use function Laravel\Prompts\callout;
 use function Laravel\Prompts\select;
+use function Laravel\Prompts\text;
 
 class InstallCommand extends Command
 {
@@ -23,6 +24,7 @@ class InstallCommand extends Command
                             {--path= : The Saucebase application directory (defaults to the current directory)}
                             {--driver= : Environment driver (docker, native) — prompted if omitted}
                             {--ssl= : Enable HTTPS with mkcert for docker (yes/no) — prompted if omitted}
+                            {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--modules= : Comma-separated list of modules to enable (e.g. Auth,Settings), or "none"}
@@ -33,6 +35,8 @@ class InstallCommand extends Command
     protected $description = 'Install and configure an existing Saucebase application';
 
     protected ?string $selectedStack = null;
+
+    protected ?string $domain = null;
 
     /** @var string[] */
     protected array $selectedModules = [];
@@ -53,6 +57,8 @@ class InstallCommand extends Command
             return $this->handleCIInstallation();
         }
 
+        $this->captureDomain();
+
         $driver = $this->resolveDriver();
 
         $missing = $driver->missingPrerequisites();
@@ -70,17 +76,20 @@ class InstallCommand extends Command
     public function targetPath(): string
     {
         if ($this->resolvedTargetPath === null) {
-            try {
-                $path = $this->option('path');
-            } catch (\Throwable) {
-                // No input bound (command instantiated outside the console app).
-                $path = null;
-            }
-
-            $this->resolvedTargetPath = rtrim($path ?: getcwd(), '/');
+            $this->resolvedTargetPath = rtrim($this->optionOrNull('path') ?: getcwd(), '/');
         }
 
         return $this->resolvedTargetPath;
+    }
+
+    /** Read an option, tolerating a command instantiated outside the console app (no input bound). */
+    public function optionOrNull(string $key): string|array|bool|null
+    {
+        try {
+            return $this->option($key);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     public function path(string $relative = ''): string
@@ -144,6 +153,77 @@ class InstallCommand extends Command
         $this->selectedStack = $stack;
     }
 
+    protected function captureDomain(): void
+    {
+        $option = $this->option('domain');
+
+        // An already-installed app's host is the default, so accepting the prompt keeps
+        // it and answering something else genuinely changes it.
+        $current = $this->envValue('APP_HOST') ?: 'localhost';
+
+        $domain = match (true) {
+            $option !== null && $option !== '' => $option,
+            (bool) $this->option('force') => $current,
+            default => text(
+                label: 'Which hostname will you use for this app?',
+                default: $current,
+                hint: 'Use localhost, or a custom domain such as myapp.test.',
+                validate: fn (string $value) => self::normalizeDomain($value) === null
+                    ? 'Enter a bare hostname, e.g. myapp.test'
+                    : null,
+            ),
+        };
+
+        $this->domain = self::normalizeDomain($domain) ?? 'localhost';
+
+        $this->warnWhenDomainDoesNotResolve($this->domain);
+    }
+
+    /** Read a key straight out of the target app's .env, or null when absent. */
+    protected function envValue(string $key): ?string
+    {
+        $env = @file_get_contents($this->path('.env'));
+
+        return ($env !== false && preg_match('/^'.preg_quote($key, '/').'=(.+)$/m', $env, $m) === 1)
+            ? trim(trim($m[1]), "\"'")
+            : null;
+    }
+
+    /**
+     * Reduce a user-entered value to a bare hostname, or null when it is not one.
+     * Accepts a pasted URL: "https://My.App.test:8443/" becomes "my.app.test".
+     */
+    public static function normalizeDomain(string $value): ?string
+    {
+        $host = strtolower(trim($value));
+        $host = preg_replace('#^[a-z]+://#', '', $host);
+        $host = strtok($host, ':/');
+
+        return ($host !== false && $host !== '' && preg_match('/^[a-z0-9.-]+$/', $host) === 1)
+            ? $host
+            : null;
+    }
+
+    /**
+     * A custom domain resolves only via /etc/hosts, Herd, Valet or dnsmasq. Say so
+     * rather than letting the browser fail after a successful install.
+     */
+    protected function warnWhenDomainDoesNotResolve(string $domain): void
+    {
+        if ($domain === 'localhost' || gethostbyname($domain.'.') !== $domain.'.') {
+            return;
+        }
+
+        $this->components->warn("\"{$domain}\" does not resolve on this machine yet.");
+        $this->line('  Add it to /etc/hosts before opening the app:');
+        $this->line("  <fg=yellow>127.0.0.1  {$domain}</>");
+    }
+
+    public function getDomain(): string
+    {
+        return $this->domain ?? 'localhost';
+    }
+
     public function runStack(): void
     {
         if ($this->selectedStack) {
@@ -176,6 +256,42 @@ class InstallCommand extends Command
         }
 
         $this->selectedModules = $this->registry()->promptSelection($available);
+    }
+
+    /**
+     * Refuse to install a module that ships no frontend for the chosen stack.
+     *
+     * @param  string[]  $packages
+     */
+    public function assertModulesSupportStack(array $packages): bool
+    {
+        if (! $this->selectedStack || empty($packages)) {
+            return true;
+        }
+
+        $incompatible = [];
+
+        foreach ($packages as $package) {
+            $frameworks = $this->fetchPackageFrameworks($package);
+
+            if (! in_array($this->selectedStack, $frameworks, true)) {
+                $incompatible[$package] = $frameworks;
+            }
+        }
+
+        if (empty($incompatible)) {
+            return true;
+        }
+
+        $this->error("These modules do not support the {$this->selectedStack} stack:");
+
+        foreach ($incompatible as $package => $frameworks) {
+            $this->line("  {$package} — supports: ".implode(', ', $frameworks));
+        }
+
+        $this->line('Drop them from --modules, or install with a stack they support.');
+
+        return false;
     }
 
     /**
@@ -213,6 +329,8 @@ class InstallCommand extends Command
         if (! $this->ensureEnvFile()) {
             return self::FAILURE;
         }
+
+        $this->applyAppIdentity();
 
         $this->generateApplicationKey();
 
@@ -267,6 +385,87 @@ class InstallCommand extends Command
         $this->error('.env file not found. Copy .env.example to .env and configure it before running the installer.');
 
         return false;
+    }
+
+    /**
+     * Name the app after its own directory, and record the host it will be served on.
+     *
+     * The skeleton ships APP_NAME="Saucebase" / APP_SLUG=saucebase, and nothing used to
+     * change them — so every app shared a name, and (since applyDockerEnvDefaults()
+     * derives them from APP_SLUG) a database name too.
+     */
+    public function applyAppIdentity(bool $native = true): void
+    {
+        $path = $this->path('.env');
+        $original = @file_get_contents($path);
+
+        if ($original === false) {
+            return;
+        }
+
+        $directory = basename($this->targetPath());
+
+        $modified = $this->applyIdentityToEnv(
+            $original,
+            Str::headline($directory),
+            Str::slug($directory),
+            $this->getDomain(),
+            native: $native,
+        );
+
+        if ($modified !== $original) {
+            file_put_contents($path, $modified);
+            $this->info('Application name and host written to .env.');
+        }
+    }
+
+    /**
+     * Only a skeleton default or a blank is replaced, so a re-run never clobbers a
+     * value the user has since edited.
+     *
+     * @param  bool  $native  Whether to set APP_URL here; under Docker it is owned by
+     *                        applyDockerEnvDefaults(), which also knows scheme and port.
+     */
+    protected function applyIdentityToEnv(string $env, string $name, string $slug, string $host, bool $native = false): string
+    {
+        $replaceable = [
+            'APP_NAME' => ['Saucebase', str_contains($name, ' ') ? "\"{$name}\"" : $name],
+            'APP_SLUG' => ['saucebase', $slug],
+        ];
+
+        foreach ($replaceable as $key => [$default, $value]) {
+            $current = preg_match('/^'.preg_quote($key, '/').'=(.*)$/m', $env, $m)
+                ? trim(trim($m[1]), "\"'")
+                : null;
+
+            if ($current === null || $current === '' || $current === $default) {
+                $env = self::setEnvLine($env, $key, $value);
+            }
+        }
+
+        // Always authoritative: the certificate and nginx config are generated from the
+        // resolved domain, so APP_HOST must agree with them. A user's own value is not
+        // lost — it is what captureDomain() offers as the prompt default.
+        $env = self::setEnvLine($env, 'APP_HOST', $host);
+
+        // Native serves on whatever laravel/installer already wrote for localhost
+        // (http://localhost:8000, which is what `composer dev` binds); only a custom
+        // host needs correcting here.
+        if ($native && $host !== 'localhost') {
+            $env = self::setEnvLine($env, 'APP_URL', 'http://'.$host);
+        }
+
+        return $env;
+    }
+
+    /** Replace a key's value, appending the line when the key is absent. */
+    public static function setEnvLine(string $env, string $key, string $value): string
+    {
+        $pattern = '/^'.preg_quote($key, '/').'=.*$/m';
+
+        return preg_match($pattern, $env)
+            ? preg_replace($pattern, "{$key}={$value}", $env)
+            : $env."\n{$key}={$value}";
     }
 
     public function envHasAppKey(): bool
@@ -529,5 +728,88 @@ class InstallCommand extends Command
             $steps ? Element::numberedList(array_values($steps)) : null,
             'Learn more: '.Element::link('https://github.com/saucebase-dev/saucebase'),
         ]);
+    }
+
+    /** @param  array<string, string>  $resumeOptions */
+    public function displayFailure(?string $step = null, array $resumeOptions = []): void
+    {
+        callout(label: 'Installation did not finish', content: $this->failureCalloutContent($step, $resumeOptions));
+    }
+
+    /**
+     * @param  array<string, string>  $resumeOptions
+     * @return array<int, string>
+     */
+    protected function failureCalloutContent(?string $step, array $resumeOptions): array
+    {
+        return array_values(array_filter([
+            $step ? "Failed at: {$step}" : null,
+            'Your application directory is intact — nothing was rolled back.',
+            'Fix the problem reported above, then resume with:',
+            '  '.$this->resumeCommand($resumeOptions),
+        ]));
+    }
+
+    /**
+     * The exact command that resumes this install, with every answer baked in.
+     *
+     * `install` is idempotent (existing stubs, certs, .env and app key are all left
+     * alone), so re-running it is the resume path. A bare `saucebase install` would
+     * re-prompt for stack, driver and modules, hence every option is spelled out —
+     * including the ones that came from prompts rather than the command line.
+     *
+     * @param  array<string, string>  $resumeOptions  Driver-resolved options (--driver, --ssl).
+     */
+    public function resumeCommand(array $resumeOptions = []): string
+    {
+        $command = 'saucebase install';
+
+        if ($this->selectedStack) {
+            $command .= ' '.$this->selectedStack;
+        }
+
+        foreach ($resumeOptions as $option => $value) {
+            $command .= " {$option}={$value}";
+        }
+
+        if ($this->domain !== null) {
+            $command .= ' --domain='.$this->domain;
+        }
+
+        if ($modules = $this->resumeModules()) {
+            $command .= ' --modules='.$modules;
+        }
+
+        foreach (['all-modules', 'dev', 'fresh', 'force'] as $flag) {
+            if ($this->optionOrNull($flag)) {
+                $command .= ' --'.$flag;
+            }
+        }
+
+        $target = $this->targetPath();
+
+        return $target === rtrim((string) getcwd(), '/')
+            ? $command
+            : 'cd '.$this->quotePath($target).' && '.$command;
+    }
+
+    /** The --modules value for a resume run, or null when selection was never resolved. */
+    protected function resumeModules(): ?string
+    {
+        if ($this->optionOrNull('all-modules')) {
+            return null;
+        }
+
+        if ($option = $this->optionOrNull('modules')) {
+            return is_string($option) ? $option : null;
+        }
+
+        return $this->selectedModules ? implode(',', $this->selectedModules) : null;
+    }
+
+    /** Quote only when needed, but quote safely: paths can contain $, backticks or quotes. */
+    protected function quotePath(string $path): string
+    {
+        return preg_match('#^[A-Za-z0-9._/@:+-]+$#', $path) === 1 ? $path : escapeshellarg($path);
     }
 }

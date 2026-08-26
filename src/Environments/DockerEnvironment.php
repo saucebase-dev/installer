@@ -7,10 +7,33 @@ use Saucebase\Installer\Console\Commands\InstallCommand;
 use Symfony\Component\Process\Process;
 
 use function Laravel\Prompts\confirm;
+use function Laravel\Prompts\select;
 
 class DockerEnvironment extends Environment
 {
+    /**
+     * Host ports published by docker-compose.yml: env key => [compose default, label].
+     * Keep in sync with stubs/docker/docker-compose.yml.
+     */
+    private const PORTS = [
+        'APP_PORT' => [80, 'HTTP'],
+        'APP_HTTPS_PORT' => [443, 'HTTPS'],
+        'FORWARD_DB_PORT' => [3306, 'MySQL'],
+        'FORWARD_REDIS_PORT' => [6379, 'Redis'],
+        'FORWARD_MAILPIT_PORT' => [1025, 'Mailpit SMTP'],
+        'FORWARD_MAILPIT_DASHBOARD_PORT' => [8025, 'Mailpit dashboard'],
+    ];
+
+    /** Where to start scanning for a replacement port; defaults to the conflicting port + 1. */
+    private const ALTERNATIVE_PORT_BASES = [
+        'APP_PORT' => 8080,
+        'APP_HTTPS_PORT' => 8443,
+    ];
+
     protected bool $ssl = true;
+
+    /** @var array<string, int> Env key => replacement port, when the defaults were taken. */
+    protected array $portOverrides = [];
 
     public function name(): string
     {
@@ -59,31 +82,41 @@ class DockerEnvironment extends Environment
         $this->generateSsl($command);
 
         if (! $command->ensureEnvFile()) {
-            return InstallCommand::FAILURE;
+            return $this->fail('Preparing .env');
         }
 
+        // APP_HOST must land before setDockerEnvDefaults(), which builds APP_URL from it.
+        $command->applyAppIdentity(native: false);
         $this->setDockerEnvDefaults($command);
 
+        // Ports are read back from .env, so this must follow setDockerEnvDefaults().
+        if (! $this->checkPorts($command)) {
+            return $this->fail('Checking host ports');
+        }
+
+        // Needs the host and the final port assignments, so it follows the port check.
+        $this->configureNginx($command);
+
         if (! $this->startDocker($command)) {
-            return InstallCommand::FAILURE;
+            return $this->fail('Starting Docker services');
         }
 
         if (! $this->runComposerInContainer($command)) {
-            return InstallCommand::FAILURE;
+            return $this->fail('Installing PHP dependencies');
         }
 
         if (! $this->generateAppKey($command)) {
-            return InstallCommand::FAILURE;
+            return $this->fail('Generating application key');
         }
 
         if (! $this->runMigrations($command)) {
-            return InstallCommand::FAILURE;
+            return $this->fail('Running migrations');
         }
 
         $this->runStack($command);
 
         if (! $this->installModules($command)) {
-            return InstallCommand::FAILURE;
+            return $this->fail('Installing modules');
         }
 
         $command->rewriteCrossModuleImports();
@@ -153,8 +186,10 @@ class DockerEnvironment extends Environment
 
         $certFile = $command->path('docker/ssl/app.pem');
         $keyFile = $command->path('docker/ssl/app.key.pem');
+        $host = $command->getDomain();
 
-        if (file_exists($certFile) && file_exists($keyFile)) {
+        // Re-installing with a different domain must not keep a cert that omits it.
+        if (file_exists($certFile) && file_exists($keyFile) && $this->certCoversHost($certFile, $host)) {
             return;
         }
 
@@ -167,13 +202,385 @@ class DockerEnvironment extends Environment
             'mkcert',
             '-key-file', $keyFile,
             '-cert-file', $certFile,
-            '*.localhost', 'localhost', '127.0.0.1', '::1',
+            ...$this->certificateHosts($host),
         ]);
         $cert->run();
 
         if (! $cert->isSuccessful()) {
             $command->warn('SSL generation failed. Run mkcert manually if HTTPS is needed.');
         }
+    }
+
+    /** @return string[] mkcert SANs: the chosen host and its wildcard, plus localhost. */
+    protected function certificateHosts(string $host): array
+    {
+        $hosts = ['localhost', '*.localhost', '127.0.0.1', '::1'];
+
+        return $host === 'localhost' ? $hosts : [$host, "*.{$host}", ...$hosts];
+    }
+
+    /**
+     * Whether an existing certificate already lists the host as a SAN.
+     *
+     * Read via the text dump rather than `-checkhost`: macOS ships LibreSSL, which
+     * does not support that flag. Any failure returns false, so we regenerate.
+     */
+    protected function certCoversHost(string $certFile, string $host): bool
+    {
+        $process = new Process(['openssl', 'x509', '-in', $certFile, '-noout', '-text']);
+        $process->setTimeout(15);
+        $process->run();
+
+        if (! $process->isSuccessful()) {
+            return false;
+        }
+
+        // Anchor the end so "DNS:myapp.test" does not satisfy a request for "app.test".
+        return preg_match('/DNS:'.preg_quote($host, '/').'(?=[,\s]|$)/', $process->getOutput()) === 1;
+    }
+
+    /**
+     * Point the published nginx config at the chosen host and the ports actually
+     * published. Both stubs ship hardcoded for localhost on 80/443.
+     */
+    protected function configureNginx(InstallCommand $command): void
+    {
+        $path = $command->path('docker/nginx.conf');
+        $original = @file_get_contents($path);
+
+        if ($original === false) {
+            return;
+        }
+
+        // Read back from .env rather than $portOverrides: on a resume the ports were
+        // persisted by an earlier run and nothing is overridden this time round.
+        $ports = $this->resolvePorts($command);
+
+        $modified = $this->applyNginxSettings(
+            $original,
+            $command->getDomain(),
+            $ports['APP_PORT'],
+            $ports['APP_HTTPS_PORT'],
+        );
+
+        if ($modified !== $original) {
+            file_put_contents($path, $modified);
+            $command->info('nginx configured for '.$command->getDomain().'.');
+        }
+    }
+
+    protected function applyNginxSettings(string $conf, string $host, int $httpPort, int $httpsPort): string
+    {
+        // Only touch blocks that name localhost — the stub's, and the ones this method
+        // wrote before (it always keeps localhost as a secondary name). A vhost the user
+        // added themselves has no localhost and is left completely alone. Matching any
+        // existing name, not just the stub's, is what lets a re-install with a different
+        // domain replace the old one. The custom name goes first: the HTTP block
+        // redirects using $server_name, which resolves to the primary name.
+        $names = $host === 'localhost' ? 'localhost' : $host.' localhost';
+        $conf = preg_replace(
+            '/^(\s*)server_name\s+([^;]*\blocalhost\b[^;]*);/m',
+            '$1server_name '.$names.';',
+            $conf,
+        );
+
+        // $server_name carries no port, so a redirect would land on 443 even when
+        // HTTPS was remapped. Matches an existing port so re-runs re-target cleanly.
+        $conf = preg_replace_callback(
+            '#https://\$server_name(:\d+)?\$request_uri#',
+            fn () => 'https://$server_name'.($httpsPort !== 443 ? ':'.$httpsPort : '').'$request_uri',
+            $conf,
+        );
+
+        // Laravel builds URLs from what PHP is told the port is; without this a stack
+        // moved off 443 by the port check would still advertise 443. Pick the port from
+        // which stub this is, not from the value already there — on a re-run that value
+        // is the remapped one, and matching on it would flip the block to HTTP.
+        // `listen 443 ssl` is stable: only the published host port ever moves.
+        $serverPort = str_contains($conf, 'listen 443 ssl') ? $httpsPort : $httpPort;
+
+        return preg_replace(
+            '/^(\s*fastcgi_param\s+SERVER_PORT\s+)\d+(;)/m',
+            '${1}'.$serverPort.'$2',
+            $conf,
+        );
+    }
+
+    /**
+     * Verify every host port docker-compose.yml publishes is free before starting,
+     * so a clash surfaces as a choice rather than as a raw daemon bind error.
+     */
+    protected function checkPorts(InstallCommand $command): bool
+    {
+        $wanted = $this->resolvePorts($command);
+        $inUse = array_filter($wanted, fn (int $port) => $this->portInUse($port));
+
+        if (empty($inUse)) {
+            return true;
+        }
+
+        $owners = $this->dockerPortOwners();
+        $ours = $this->ownContainers($command);
+
+        // A resumed install finds its own containers already holding these ports.
+        // Remapping them would move the whole app on every retry.
+        $conflicts = array_filter(
+            $inUse,
+            fn (int $port) => ! in_array($owners[$port]['container'] ?? '', $ours, true),
+        );
+
+        if (empty($conflicts)) {
+            return true;
+        }
+
+        $command->warn('Some host ports this app needs are already in use:');
+        foreach ($conflicts as $key => $port) {
+            $command->line(sprintf('  %d (%s) — %s', $port, self::PORTS[$key][1], $this->describeOwner($owners[$port] ?? null)));
+        }
+
+        $targets = $this->stoppableTargets($conflicts, $owners);
+
+        $options = [];
+        if ($targets !== []) {
+            $options['stop'] = 'Stop '.$this->describeTargets($targets).' and continue';
+        }
+        $options['ports'] = 'Use alternative free ports for this app';
+        $options['abort'] = 'Abort the install';
+
+        // Alternative ports is the safe default: it is the only choice that resolves
+        // the clash without touching containers someone else may still be using.
+        $choice = $command->option('force') ? 'ports' : select(
+            label: 'How would you like to continue?',
+            options: $options,
+            default: 'ports',
+        );
+
+        return match ($choice) {
+            'stop' => $this->stopConflicting($command, $targets, $conflicts),
+            'ports' => $this->useAlternativePorts($command, $wanted, $conflicts),
+            default => $this->abortForPorts($command),
+        };
+    }
+
+    /** @return array<string, int> Env key => the port that will be published. */
+    protected function resolvePorts(InstallCommand $command): array
+    {
+        $ports = [];
+
+        foreach (self::PORTS as $key => [$default]) {
+            $value = $this->readEnvValue($command, $key);
+            $ports[$key] = is_numeric($value) ? (int) $value : $default;
+        }
+
+        return $ports;
+    }
+
+    protected function portInUse(int $port): bool
+    {
+        // ponytail: connect-probe — misses a listener bound only to a non-loopback
+        // interface. A bind-probe matches Docker more closely but needs root for
+        // 80/443, so it would false-positive far more often. Swap if this ever bites.
+        $socket = @fsockopen('127.0.0.1', $port, $errno, $error, 0.3);
+
+        if ($socket === false) {
+            return false;
+        }
+
+        fclose($socket);
+
+        return true;
+    }
+
+    /** @return string[] Names of the containers belonging to this app's own Compose project. */
+    protected function ownContainers(InstallCommand $command): array
+    {
+        $process = new Process(['docker', 'compose', 'ps', '--format', '{{.Name}}'], $command->targetPath());
+        $process->setTimeout(15);
+        $process->run();
+
+        if (! $process->isSuccessful()) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map('trim', preg_split('/\R/', $process->getOutput()) ?: [])));
+    }
+
+    /** @return array<int, array{container: string, project: string|null}> Host port => owner. */
+    protected function dockerPortOwners(): array
+    {
+        $process = new Process([
+            'docker', 'ps', '--format', '{{.Ports}}|{{.Names}}|{{.Label "com.docker.compose.project"}}',
+        ]);
+        $process->setTimeout(15);
+        $process->run();
+
+        return $process->isSuccessful() ? $this->parseDockerPortOwners($process->getOutput()) : [];
+    }
+
+    /** @return array<int, array{container: string, project: string|null}> */
+    protected function parseDockerPortOwners(string $psOutput): array
+    {
+        $owners = [];
+
+        foreach (preg_split('/\R/', trim($psOutput)) ?: [] as $line) {
+            if (trim($line) === '') {
+                continue;
+            }
+
+            [$ports, $container, $project] = array_pad(explode('|', $line, 3), 3, '');
+
+            // Only published bindings carry a "host:port->" prefix. A bare "9000/tcp"
+            // is merely exposed to the container network and binds nothing on the host.
+            preg_match_all('/:(\d+)->/', $ports, $matches);
+
+            foreach ($matches[1] as $port) {
+                $owners[(int) $port] ??= [
+                    'container' => $container,
+                    'project' => $project !== '' ? $project : null,
+                ];
+            }
+        }
+
+        return $owners;
+    }
+
+    /** @param  array{container: string, project: string|null}|null  $owner */
+    protected function describeOwner(?array $owner): string
+    {
+        if ($owner === null) {
+            return 'held by another process on this machine (not Docker, so the installer cannot stop it)';
+        }
+
+        return $owner['project'] !== null
+            ? sprintf('held by Docker project "%s" (container %s)', $owner['project'], $owner['container'])
+            : sprintf('held by Docker container "%s"', $owner['container']);
+    }
+
+    /**
+     * Docker stacks whose shutdown would clear *every* conflict. Stopping a subset
+     * would leave the install blocked anyway, so it is not offered.
+     *
+     * @param  array<string, int>  $conflicts
+     * @param  array<int, array{container: string, project: string|null}>  $owners
+     * @return array<int, array{container: string, project: string|null}>
+     */
+    protected function stoppableTargets(array $conflicts, array $owners): array
+    {
+        $targets = [];
+
+        foreach ($conflicts as $port) {
+            if (! isset($owners[$port])) {
+                return [];
+            }
+
+            $targets[$owners[$port]['project'] ?? $owners[$port]['container']] = $owners[$port];
+        }
+
+        return array_values($targets);
+    }
+
+    /** @param  array<int, array{container: string, project: string|null}>  $targets */
+    protected function describeTargets(array $targets): string
+    {
+        return implode(', ', array_map(
+            fn (array $target) => $target['project'] !== null
+                ? sprintf('Docker project "%s"', $target['project'])
+                : sprintf('Docker container "%s"', $target['container']),
+            $targets,
+        ));
+    }
+
+    /**
+     * @param  array<int, array{container: string, project: string|null}>  $targets
+     * @param  array<string, int>  $conflicts
+     */
+    protected function stopConflicting(InstallCommand $command, array $targets, array $conflicts): bool
+    {
+        // Stopping someone else's containers is destructive — never without an explicit yes.
+        $confirmed = confirm(
+            label: 'Stop '.$this->describeTargets($targets).'?',
+            default: false,
+            hint: 'This shuts down containers that another app may still be using.',
+        );
+
+        if (! $confirmed) {
+            $command->warn('Nothing was stopped.');
+
+            return $this->abortForPorts($command);
+        }
+
+        foreach ($targets as $target) {
+            $command->info('Stopping '.($target['project'] ?? $target['container']).'...');
+
+            $process = $target['project'] !== null
+                ? new Process(['docker', 'compose', '-p', $target['project'], 'stop'])
+                : new Process(['docker', 'stop', $target['container']]);
+            $process->setTimeout(120);
+            $process->run();
+
+            if (! $process->isSuccessful()) {
+                $command->error('Failed to stop '.($target['project'] ?? $target['container']).': '.$process->getErrorOutput());
+            }
+        }
+
+        $remaining = array_filter($conflicts, fn (int $port) => $this->portInUse($port));
+
+        if ($remaining !== []) {
+            $command->error('Still in use after stopping: '.implode(', ', $remaining));
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param  array<string, int>  $wanted
+     * @param  array<string, int>  $conflicts
+     */
+    protected function useAlternativePorts(InstallCommand $command, array $wanted, array $conflicts): bool
+    {
+        // Seed with the ports we are already keeping so two services cannot collide.
+        $taken = array_values(array_diff_key($wanted, $conflicts));
+
+        foreach ($conflicts as $key => $port) {
+            $free = $this->freePort(self::ALTERNATIVE_PORT_BASES[$key] ?? $port + 1, $taken);
+
+            if ($free === 0) {
+                $command->error(sprintf('Could not find a free port to replace %d (%s).', $port, self::PORTS[$key][1]));
+
+                return false;
+            }
+
+            $taken[] = $free;
+            $this->portOverrides[$key] = $free;
+            $command->line(sprintf('  %s: %d → %d', self::PORTS[$key][1], $port, $free));
+        }
+
+        // Re-run the single .env writer, now carrying the overrides.
+        $this->setDockerEnvDefaults($command);
+
+        return true;
+    }
+
+    /** @param  int[]  $taken */
+    protected function freePort(int $base, array $taken = []): int
+    {
+        for ($port = $base; $port < $base + 100; $port++) {
+            if (! in_array($port, $taken, true) && ! $this->portInUse($port)) {
+                return $port;
+            }
+        }
+
+        return 0;
+    }
+
+    protected function abortForPorts(InstallCommand $command): bool
+    {
+        $command->error('Aborted: the ports Docker needs are in use.');
+        $command->line('Free them (or stop the other app), then re-run the install.');
+
+        return false;
     }
 
     protected function startDocker(InstallCommand $command): bool
@@ -299,11 +706,12 @@ class DockerEnvironment extends Environment
     protected function nextSteps(InstallCommand $command): array
     {
         $appUrl = $this->readEnvValue($command, 'APP_URL') ?? ($this->ssl ? 'https://localhost' : 'http://localhost');
+        $mailpit = $this->readEnvValue($command, 'FORWARD_MAILPIT_DASHBOARD_PORT') ?? '8025';
 
         return [
             'Compile frontend assets: `npm install && npm run dev`',
             'Open your app: `'.$appUrl.'`',
-            'Email testing (Mailpit): `http://localhost:8025`',
+            'Email testing (Mailpit): `http://localhost:'.$mailpit.'`',
         ];
     }
 
@@ -328,19 +736,27 @@ class DockerEnvironment extends Environment
             return;
         }
 
-        $modified = $this->applyDockerEnvDefaults($original, $this->ssl);
+        $modified = $this->applyDockerEnvDefaults($original, $this->ssl, $this->portOverrides);
 
         if ($modified !== $original) {
             file_put_contents($path, $modified);
-            $command->info('Docker database credentials written to .env.');
+            $command->info('Docker settings written to .env.');
         }
     }
 
-    protected function applyDockerEnvDefaults(string $env, bool $ssl = true): string
+    /** @param  array<string, int>  $ports  Env key => port, forced over any existing value. */
+    protected function applyDockerEnvDefaults(string $env, bool $ssl = true, array $ports = []): string
     {
         $slug = 'saucebase';
         if (preg_match('/^APP_SLUG=([^\s]+)/m', $env, $m)) {
             $slug = trim($m[1], "\"'");
+        }
+
+        // The identity pass (InstallCommand::applyAppIdentity) always runs first, so
+        // APP_HOST carries the domain that was chosen for this app.
+        $host = 'localhost';
+        if (preg_match('/^APP_HOST=([^\s]+)/m', $env, $m)) {
+            $host = trim($m[1], "\"'");
         }
 
         // Docker always needs mysql, not sqlite
@@ -357,11 +773,24 @@ class DockerEnvironment extends Environment
             $env .= "\nMAIL_MAILER=smtp";
         }
 
-        // Set APP_URL to match the chosen SSL mode
-        $defaultUrl = $ssl ? 'https://localhost' : 'http://localhost';
+        // Set APP_URL to match the chosen host and SSL mode, carrying the published
+        // port whenever it is not the scheme's default one.
+        $portKey = $ssl ? 'APP_HTTPS_PORT' : 'APP_PORT';
+        $appPort = $ports[$portKey] ?? null;
+
+        // No override this run: fall back to a port an earlier run already persisted,
+        // otherwise a resume would silently drop :8443 from the URL.
+        if ($appPort === null && preg_match('/^'.$portKey.'=(\d+)/m', $env, $m)) {
+            $appPort = (int) $m[1];
+        }
+
+        $suffix = ($appPort !== null && $appPort !== ($ssl ? 443 : 80)) ? ':'.$appPort : '';
+        $defaultUrl = ($ssl ? 'https' : 'http').'://'.$host.$suffix;
         if (preg_match('/^APP_URL=(.*)$/m', $env, $m)) {
             $url = trim($m[1], "\"'");
-            if (preg_match('#^https?://localhost(:\d+)?/?$#', $url)) {
+            // Correct a URL for localhost or for the chosen host (scheme and port may
+            // have changed); leave a genuinely custom one alone.
+            if (preg_match('#^https?://(localhost|'.preg_quote($host, '#').')(:\d+)?/?$#', $url)) {
                 $env = preg_replace('/^APP_URL=.*$/m', "APP_URL={$defaultUrl}", $env);
             }
         } else {
@@ -387,7 +816,18 @@ class DockerEnvironment extends Environment
             }
         }
 
+        // Port overrides are forced, not defaulted: the value already there is the
+        // one that clashed.
+        foreach ($ports as $key => $port) {
+            $env = InstallCommand::setEnvLine($env, $key, (string) $port);
+        }
+
         return $env;
+    }
+
+    protected function resumeOptions(): array
+    {
+        return array_merge(parent::resumeOptions(), ['--ssl' => $this->ssl ? 'yes' : 'no']);
     }
 
     protected function dockerComposeAvailable(): bool

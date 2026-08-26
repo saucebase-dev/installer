@@ -33,6 +33,7 @@ class NewCommand extends Command
                             {--modules= : Comma-separated list of modules to enable, or "none"}
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--ssl= : Enable HTTPS with mkcert for docker (yes/no) — prompted if omitted}
+                            {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
                             {--using= : The skeleton package to install (defaults to saucebase/saucebase)}
                             {--dev : Dev environment}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
@@ -75,6 +76,8 @@ class NewCommand extends Command
             return self::FAILURE;
         }
 
+        $domain = $this->resolveDomain($name);
+
         $stack = $this->option('stack') ?: select(
             label: 'Which frontend stack would you like to use?',
             options: ['vue' => 'Vue', 'react' => 'React'],
@@ -91,7 +94,7 @@ class NewCommand extends Command
 
         $this->line('  Setup continues below - see the final summary for the real next steps.');
 
-        $result = $this->call('install', $this->installArguments($name, $driver, $stack, $ssl, $modules));
+        $result = $this->call('install', $this->installArguments($name, $driver, $stack, $ssl, $modules, $domain));
 
         if ($result === self::SUCCESS) {
             $this->saveDriverPreference($driver->name());
@@ -129,6 +132,30 @@ class NewCommand extends Command
                 hint: 'Requires mkcert. Install with: brew install mkcert',
             ),
         };
+    }
+
+    /**
+     * The hostname the app will be served on. Collected upfront (like ssl and stack)
+     * because the SSL certificate and nginx config are both built from it.
+     */
+    protected function resolveDomain(string $name): string
+    {
+        $option = $this->option('domain');
+
+        $answer = match (true) {
+            $option !== null && $option !== '' => $option,
+            (bool) $this->option('force') => 'localhost',
+            default => text(
+                label: 'Which hostname will you use for this app?',
+                default: 'localhost',
+                hint: 'Use localhost, or a custom domain such as '.strtolower($name).'.test',
+                validate: fn (string $value) => InstallCommand::normalizeDomain($value) === null
+                    ? 'Enter a bare hostname, e.g. myapp.test'
+                    : null,
+            ),
+        };
+
+        return InstallCommand::normalizeDomain($answer) ?? 'localhost';
     }
 
     /**
@@ -216,12 +243,13 @@ class NewCommand extends Command
      * @param  string[]|null  $modules
      * @return array<string, mixed>
      */
-    protected function installArguments(string $name, Environment $driver, string $stack, ?bool $ssl, ?array $modules): array
+    protected function installArguments(string $name, Environment $driver, string $stack, ?bool $ssl, ?array $modules, string $domain = 'localhost'): array
     {
         $arguments = [
             'stack' => $stack,
             '--path' => getcwd().'/'.$name,
             '--driver' => $driver->name(),
+            '--domain' => $domain,
             '--no-logo' => true,
         ];
 
