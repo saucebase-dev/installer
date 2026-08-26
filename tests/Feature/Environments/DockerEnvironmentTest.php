@@ -905,6 +905,17 @@ class DockerEnvironmentTest extends TestCase
         $this->assertStringNotContainsString('SERVER_PORT 443;', $result);
     }
 
+    public function test_nginx_server_port_survives_a_re_run(): void
+    {
+        // Regression: deciding the block from the value already present flipped the
+        // SSL block to the HTTP port on the second pass, because by then it read 8443.
+        $first = $this->exposed()->exposedApplyNginxSettings($this->nginxStub(), 'myapp.test', 8080, 8443);
+        $second = $this->exposed()->exposedApplyNginxSettings($first, 'myapp.test', 8080, 8443);
+
+        $this->assertStringContainsString('fastcgi_param SERVER_PORT 8443;', $second);
+        $this->assertStringNotContainsString('SERVER_PORT 8080;', $second);
+    }
+
     public function test_nginx_no_ssl_stub_gets_the_http_port(): void
     {
         $stub = file_get_contents(dirname(__DIR__, 3).'/stubs/docker/docker/nginx-no-ssl.conf');

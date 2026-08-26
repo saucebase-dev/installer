@@ -293,10 +293,15 @@ class DockerEnvironment extends Environment
         );
 
         // Laravel builds URLs from what PHP is told the port is; without this a stack
-        // moved off 443 by the port check would still advertise 443.
-        return preg_replace_callback(
-            '/^(\s*fastcgi_param\s+SERVER_PORT\s+)(\d+)(;)/m',
-            fn (array $m) => $m[1].($m[2] === '443' ? $httpsPort : $httpPort).$m[3],
+        // moved off 443 by the port check would still advertise 443. Pick the port from
+        // which stub this is, not from the value already there — on a re-run that value
+        // is the remapped one, and matching on it would flip the block to HTTP.
+        // `listen 443 ssl` is stable: only the published host port ever moves.
+        $serverPort = str_contains($conf, 'listen 443 ssl') ? $httpsPort : $httpPort;
+
+        return preg_replace(
+            '/^(\s*fastcgi_param\s+SERVER_PORT\s+)\d+(;)/m',
+            '${1}'.$serverPort.'$2',
             $conf,
         );
     }
