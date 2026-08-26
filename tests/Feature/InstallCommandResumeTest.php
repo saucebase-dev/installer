@@ -2,7 +2,6 @@
 
 namespace Saucebase\Installer\Tests\Feature;
 
-use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Tests\TestCase;
 
 class InstallCommandResumeTest extends TestCase
