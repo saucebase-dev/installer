@@ -453,22 +453,22 @@ class DockerEnvironmentTest extends TestCase
 
     /** Verbatim `docker ps` output from a machine running a conflicting Saucebase stack. */
     private const DOCKER_PS = <<<'OUTPUT'
-        |whatsthere-queue-1|whatsthere
-        9000/tcp|whatsthere-app-1|whatsthere
-        0.0.0.0:6379->6379/tcp, [::]:6379->6379/tcp|whatsthere-redis-1|whatsthere
-        0.0.0.0:3306->3306/tcp, [::]:3306->3306/tcp|whatsthere-mysql-1|whatsthere
-        0.0.0.0:1025->1025/tcp, [::]:1025->1025/tcp, 0.0.0.0:8025->8025/tcp, [::]:8025->8025/tcp|whatsthere-mailpit-1|whatsthere
+        |my-app-example-queue-1|my-app-example
+        9000/tcp|my-app-example-app-1|my-app-example
+        0.0.0.0:6379->6379/tcp, [::]:6379->6379/tcp|my-app-example-redis-1|my-app-example
+        0.0.0.0:3306->3306/tcp, [::]:3306->3306/tcp|my-app-example-mysql-1|my-app-example
+        0.0.0.0:1025->1025/tcp, [::]:1025->1025/tcp, 0.0.0.0:8025->8025/tcp, [::]:8025->8025/tcp|my-app-example-mailpit-1|my-app-example
         OUTPUT;
 
     public function test_parses_published_ports_to_their_owning_compose_project(): void
     {
         $owners = $this->exposed()->exposedParseDockerPortOwners(self::DOCKER_PS);
 
-        $this->assertSame(['container' => 'whatsthere-redis-1', 'project' => 'whatsthere'], $owners[6379]);
-        $this->assertSame(['container' => 'whatsthere-mysql-1', 'project' => 'whatsthere'], $owners[3306]);
+        $this->assertSame(['container' => 'my-app-example-redis-1', 'project' => 'my-app-example'], $owners[6379]);
+        $this->assertSame(['container' => 'my-app-example-mysql-1', 'project' => 'my-app-example'], $owners[3306]);
         // One container can publish several ports.
-        $this->assertSame(['container' => 'whatsthere-mailpit-1', 'project' => 'whatsthere'], $owners[1025]);
-        $this->assertSame(['container' => 'whatsthere-mailpit-1', 'project' => 'whatsthere'], $owners[8025]);
+        $this->assertSame(['container' => 'my-app-example-mailpit-1', 'project' => 'my-app-example'], $owners[1025]);
+        $this->assertSame(['container' => 'my-app-example-mailpit-1', 'project' => 'my-app-example'], $owners[8025]);
         $this->assertCount(4, $owners);
     }
 
@@ -983,6 +983,45 @@ class DockerEnvironmentTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Database user repair
+    // -------------------------------------------------------------------------
+
+    public function test_repair_sql_creates_the_database_and_user_this_app_expects(): void
+    {
+        // MySQL only honours MYSQL_USER/MYSQL_DATABASE on an empty data directory, so a
+        // volume from an earlier install keeps the user it was first created with.
+        $sql = $this->exposed()->exposedDatabaseRepairSql('my-app-example', 'my-app-example', 'secret');
+
+        $this->assertStringContainsString('CREATE DATABASE IF NOT EXISTS `my-app-example`;', $sql);
+        $this->assertStringContainsString("CREATE USER IF NOT EXISTS 'my-app-example'@'%'", $sql);
+        $this->assertStringContainsString('GRANT ALL PRIVILEGES ON `my-app-example`.*', $sql);
+    }
+
+    public function test_repair_sql_resets_the_password_so_a_stale_user_still_converges(): void
+    {
+        $sql = $this->exposed()->exposedDatabaseRepairSql('app', 'app', 'secret');
+
+        // CREATE USER IF NOT EXISTS alone leaves an existing user's old password.
+        $this->assertStringContainsString("ALTER USER 'app'@'%' IDENTIFIED BY 'secret'", $sql);
+    }
+
+    public function test_repair_sql_escapes_quotes_in_the_password(): void
+    {
+        $sql = $this->exposed()->exposedDatabaseRepairSql('app', 'app', "pa'ss");
+
+        $this->assertStringContainsString("IDENTIFIED BY 'pa''ss'", $sql);
+    }
+
+    public function test_repair_is_skipped_for_identifiers_it_cannot_safely_interpolate(): void
+    {
+        $env = $this->exposed();
+
+        $this->assertNull($env->exposedDatabaseRepairSql('app`; DROP DATABASE x; --', 'app', 'secret'));
+        $this->assertNull($env->exposedDatabaseRepairSql('app', "ro'ot", 'secret'));
+        $this->assertNull($env->exposedDatabaseRepairSql('', '', 'secret'));
+    }
+
+    // -------------------------------------------------------------------------
     // Failure messaging
     // -------------------------------------------------------------------------
 
@@ -1130,6 +1169,11 @@ class DockerEnvironmentTest extends TestCase
             public function exposedCertCoversHost(string $certFile, string $host): bool
             {
                 return $this->certCoversHost($certFile, $host);
+            }
+
+            public function exposedDatabaseRepairSql(string $db, string $user, string $password): ?string
+            {
+                return $this->databaseRepairSql($db, $user, $password);
             }
         };
     }
