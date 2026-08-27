@@ -1088,6 +1088,50 @@ class DockerEnvironmentTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Web port actually published
+    // -------------------------------------------------------------------------
+
+    public function test_start_succeeds_quietly_when_the_web_port_is_serving(): void
+    {
+        $env = $this->exposed(inUse: [443]);
+        $env->useSsl(true);
+
+        $this->assertTrue($env->exposedEnsureWebPortPublished(new FakeInstallCommand(null, [], ['path' => '/nonexistent'])));
+        $this->assertSame(0, $env->recreateCount, 'a healthy stack must not be recreated');
+    }
+
+    public function test_a_container_running_without_its_bindings_is_recreated(): void
+    {
+        // `docker compose up` reports success for a running container that lost its port
+        // bindings, and will not repair it — every other step uses `exec`, so the install
+        // would otherwise finish "successfully" against an unreachable site.
+        $env = $this->exposed(inUse: []);
+        $env->useSsl(true);
+        $env->listeningAfterRecreate = [443];
+
+        $this->assertTrue($env->exposedEnsureWebPortPublished(new FakeInstallCommand(null, [], ['path' => '/nonexistent'])));
+        $this->assertSame(1, $env->recreateCount);
+    }
+
+    public function test_start_fails_when_the_port_stays_unreachable(): void
+    {
+        $env = $this->exposed(inUse: []);
+        $env->useSsl(true);
+
+        $this->assertFalse($env->exposedEnsureWebPortPublished(new FakeInstallCommand(null, [], ['path' => '/nonexistent'])));
+        $this->assertSame(1, $env->recreateCount, 'recreate is attempted exactly once');
+    }
+
+    public function test_the_http_port_is_checked_when_ssl_is_disabled(): void
+    {
+        $env = $this->exposed(inUse: [80]);
+        $env->useSsl(false);
+
+        $this->assertTrue($env->exposedEnsureWebPortPublished(new FakeInstallCommand(null, [], ['path' => '/nonexistent'])));
+        $this->assertSame(0, $env->recreateCount);
+    }
+
+    // -------------------------------------------------------------------------
     // Failure messaging
     // -------------------------------------------------------------------------
 
@@ -1167,7 +1211,7 @@ class DockerEnvironmentTest extends TestCase
             public bool $envRewritten = false;
 
             /** @param  int[]  $inUse */
-            public function __construct(private array $inUse, public array $fakeOwners) {}
+            public function __construct(protected array $inUse, public array $fakeOwners) {}
 
             protected function portInUse(int $port): bool
             {
@@ -1240,6 +1284,32 @@ class DockerEnvironmentTest extends TestCase
             public function exposedDatabaseRepairSql(string $db, string $user, string $password): ?string
             {
                 return $this->databaseRepairSql($db, $user, $password);
+            }
+
+            public int $recreateCount = 0;
+
+            /** Ports that become reachable only after the web container is recreated. */
+            public array $listeningAfterRecreate = [];
+
+            protected function recreateWebContainer(InstallCommand $command): void
+            {
+                $this->recreateCount++;
+                $this->inUse = array_merge($this->inUse, $this->listeningAfterRecreate);
+            }
+
+            protected function waitForPort(int $port, int $attempts = 10): bool
+            {
+                return parent::waitForPort($port, 1); // no sleeping in tests
+            }
+
+            public function exposedEnsureWebPortPublished(InstallCommand $command): bool
+            {
+                return $this->ensureWebPortPublished($command);
+            }
+
+            public function useSsl(bool $ssl): void
+            {
+                $this->ssl = $ssl;
             }
         };
     }

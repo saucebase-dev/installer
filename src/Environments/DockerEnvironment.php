@@ -591,10 +591,10 @@ class DockerEnvironment extends Environment
     {
         $command->info('Starting Docker services (this may take a few minutes while pulling images and starting containers)...');
 
-        $restart = new Process(['docker', 'compose', 'restart'], $command->targetPath());
-        $restart->setTimeout(60);
-        $restart->run();
-
+        // No `docker compose restart` first: it stop/starts the existing containers, and
+        // a container that comes back up can lose its host port bindings. `up` then sees
+        // an unchanged config hash, considers it up to date, and never repairs it.
+        // `up -d` alone already creates what is missing and recreates what changed.
         $up = new Process(['docker', 'compose', 'up', '-d', '--wait', '--build'], $command->targetPath());
         $up->setTimeout(30 * 60); // 30 minutes — first run pulls images + builds layers
         $up->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
@@ -606,7 +606,63 @@ class DockerEnvironment extends Environment
             return false;
         }
 
-        return true;
+        return $this->ensureWebPortPublished($command);
+    }
+
+    /**
+     * Confirm the web container is actually reachable on its published port.
+     *
+     * Every other install step runs through `docker compose exec`, which works fine
+     * against a container whose port bindings were dropped — so without this the whole
+     * install reports success while the site refuses connections.
+     */
+    protected function ensureWebPortPublished(InstallCommand $command): bool
+    {
+        $ports = $this->resolvePorts($command);
+        $port = $this->ssl ? $ports['APP_HTTPS_PORT'] : $ports['APP_PORT'];
+
+        if ($this->waitForPort($port)) {
+            return true;
+        }
+
+        $command->warn("Nothing is listening on port {$port}; recreating the web container...");
+        $this->recreateWebContainer($command);
+
+        if ($this->waitForPort($port)) {
+            return true;
+        }
+
+        $command->error("The web container is not publishing port {$port}.");
+        $command->line('  Reset the stack with: <fg=yellow>docker compose down && docker compose up -d</>');
+
+        return false;
+    }
+
+    protected function waitForPort(int $port, int $attempts = 10): bool
+    {
+        for ($attempt = 0; $attempt < $attempts; $attempt++) {
+            if ($this->portInUse($port)) {
+                return true;
+            }
+
+            if ($attempt < $attempts - 1) {
+                usleep(500_000);
+            }
+        }
+
+        return false;
+    }
+
+    protected function recreateWebContainer(InstallCommand $command): void
+    {
+        // --force-recreate is the only thing that fixes an already-running container
+        // with dropped bindings; a plain `up` leaves it alone.
+        $process = new Process(
+            ['docker', 'compose', 'up', '-d', '--force-recreate', 'nginx'],
+            $command->targetPath(),
+        );
+        $process->setTimeout(120);
+        $process->run();
     }
 
     protected function runComposerInContainer(InstallCommand $command): bool
