@@ -184,9 +184,7 @@ class InstallCommand extends Command
     {
         $env = @file_get_contents($this->path('.env'));
 
-        return ($env !== false && preg_match('/^'.preg_quote($key, '/').'=(.+)$/m', $env, $m) === 1)
-            ? trim(trim($m[1]), "\"'")
-            : null;
+        return $env === false ? null : self::readEnvLine($env, $key);
     }
 
     /**
@@ -434,9 +432,7 @@ class InstallCommand extends Command
         ];
 
         foreach ($replaceable as $key => [$default, $value]) {
-            $current = preg_match('/^'.preg_quote($key, '/').'=(.*)$/m', $env, $m)
-                ? trim(trim($m[1]), "\"'")
-                : null;
+            $current = self::readEnvLine($env, $key);
 
             if ($current === null || $current === '' || $current === $default) {
                 $env = self::setEnvLine($env, $key, $value);
@@ -456,6 +452,14 @@ class InstallCommand extends Command
         }
 
         return $env;
+    }
+
+    /** A key's value from raw .env text, or null when the key is absent. */
+    public static function readEnvLine(string $env, string $key): ?string
+    {
+        return preg_match('/^'.preg_quote($key, '/').'=(.*)$/m', $env, $m) === 1
+            ? trim(trim($m[1]), "\"'")
+            : null;
     }
 
     /** Replace a key's value, appending the line when the key is absent. */
@@ -556,7 +560,7 @@ class InstallCommand extends Command
             return $ok = $process->isSuccessful();
         });
 
-        if (! $ok) {
+        if (! $this->composerRequireSucceeded($ok, $selected)) {
             $this->components->warn('Module installation failed — skipping patches, sync, and migrations.');
 
             return;
@@ -608,6 +612,54 @@ class InstallCommand extends Command
                 }
             }
         }
+    }
+
+    /**
+     * Whether every requested package is actually installed, per composer.lock.
+     *
+     * `composer require` exits non-zero when any post-update-cmd script fails, even
+     * though the packages resolved and installed perfectly — the skeleton's documented
+     * `boost:update` hook does exactly that until Boost is set up. Judging module
+     * installation by the exit code alone turns that into a failed install, so ask
+     * what actually landed instead.
+     *
+     * @param  string[]  $packages
+     */
+    public function modulesAreInstalled(array $packages): bool
+    {
+        $lock = json_decode((string) @file_get_contents($this->path('composer.lock')), true);
+
+        if (! is_array($lock)) {
+            return false;
+        }
+
+        $installed = array_column(
+            array_merge($lock['packages'] ?? [], $lock['packages-dev'] ?? []),
+            'name',
+        );
+
+        return array_diff(array_map('strtolower', $packages), array_map('strtolower', $installed)) === [];
+    }
+
+    /**
+     * Decide whether a non-zero `composer require` really failed, reporting either way.
+     *
+     * @param  string[]  $packages
+     */
+    public function composerRequireSucceeded(bool $exitedCleanly, array $packages): bool
+    {
+        if ($exitedCleanly) {
+            return true;
+        }
+
+        if (! $this->modulesAreInstalled($packages)) {
+            return false;
+        }
+
+        $this->warn('Composer reported an error, but every module is installed — a post-install script failed.');
+        $this->line('  If that was `boost:update`, run `php artisan boost:install` to configure Boost.');
+
+        return true;
     }
 
     public function moduleHasSeeder(string $name): bool
