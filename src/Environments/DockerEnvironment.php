@@ -745,7 +745,7 @@ class DockerEnvironment extends Environment
             timeout: 300,
         );
 
-        if (! $ok) {
+        if (! $command->composerRequireSucceeded($ok, $modules)) {
             $command->warn('Failed to install one or more modules — skipping patches, sync, and migrations.');
 
             return false;
@@ -812,57 +812,55 @@ class DockerEnvironment extends Environment
     /** @param  array<string, int>  $ports  Env key => port, forced over any existing value. */
     protected function applyDockerEnvDefaults(string $env, bool $ssl = true, array $ports = []): string
     {
-        $slug = 'saucebase';
-        if (preg_match('/^APP_SLUG=([^\s]+)/m', $env, $m)) {
-            $slug = trim($m[1], "\"'");
-        }
+        // Both bind $env by reference so a read always sees the writes before it;
+        // an arrow function would capture it by value and go stale after the first set.
+        $read = function (string $key) use (&$env): ?string {
+            return InstallCommand::readEnvLine($env, $key);
+        };
+        $set = function (string $key, string $value) use (&$env): void {
+            $env = InstallCommand::setEnvLine($env, $key, $value);
+        };
+
+        $slug = $read('APP_SLUG') ?: 'saucebase';
 
         // The identity pass (InstallCommand::applyAppIdentity) always runs first, so
         // APP_HOST carries the domain that was chosen for this app.
-        $host = 'localhost';
-        if (preg_match('/^APP_HOST=([^\s]+)/m', $env, $m)) {
-            $host = trim($m[1], "\"'");
-        }
+        $host = $read('APP_HOST') ?: 'localhost';
 
-        // Docker always needs mysql, not sqlite
-        if (preg_match('/^DB_CONNECTION=(.*)$/m', $env, $m) && trim($m[1]) !== 'mysql') {
-            $env = preg_replace('/^DB_CONNECTION=.*$/m', 'DB_CONNECTION=mysql', $env);
-        } elseif (! preg_match('/^DB_CONNECTION=/m', $env)) {
-            $env .= "\nDB_CONNECTION=mysql";
-        }
-
-        // Docker routes mail through the Mailpit container via SMTP
-        if (preg_match('/^MAIL_MAILER=(.*)$/m', $env, $m) && trim($m[1]) !== 'smtp') {
-            $env = preg_replace('/^MAIL_MAILER=.*$/m', 'MAIL_MAILER=smtp', $env);
-        } elseif (! preg_match('/^MAIL_MAILER=/m', $env)) {
-            $env .= "\nMAIL_MAILER=smtp";
-        }
-
-        // Set APP_URL to match the chosen host and SSL mode, carrying the published
-        // port whenever it is not the scheme's default one.
-        $portKey = $ssl ? 'APP_HTTPS_PORT' : 'APP_PORT';
-        $appPort = $ports[$portKey] ?? null;
-
-        // No override this run: fall back to a port an earlier run already persisted,
-        // otherwise a resume would silently drop :8443 from the URL.
-        if ($appPort === null && preg_match('/^'.$portKey.'=(\d+)/m', $env, $m)) {
-            $appPort = (int) $m[1];
-        }
-
-        $suffix = ($appPort !== null && $appPort !== ($ssl ? 443 : 80)) ? ':'.$appPort : '';
-        $defaultUrl = ($ssl ? 'https' : 'http').'://'.$host.$suffix;
-        if (preg_match('/^APP_URL=(.*)$/m', $env, $m)) {
-            $url = trim($m[1], "\"'");
-            // Correct a URL for localhost or for the chosen host (scheme and port may
-            // have changed); leave a genuinely custom one alone.
-            if (preg_match('#^https?://(localhost|'.preg_quote($host, '#').')(:\d+)?/?$#', $url)) {
-                $env = preg_replace('/^APP_URL=.*$/m', "APP_URL={$defaultUrl}", $env);
+        // Docker always needs mysql rather than sqlite, and routes mail through the
+        // Mailpit container over SMTP.
+        foreach (['DB_CONNECTION' => 'mysql', 'MAIL_MAILER' => 'smtp'] as $key => $required) {
+            if ($read($key) !== $required) {
+                $set($key, $required);
             }
-        } else {
-            $env .= "\nAPP_URL={$defaultUrl}";
         }
 
-        // Set missing or blank values; respect anything the user has already configured
+        // Point mail at the Mailpit container. Compose interpolates ${MAIL_HOST} from
+        // this file, so a stale "localhost" here is what the app container actually
+        // receives — and inside that container localhost is the app itself, not Mailpit.
+        // A real SMTP host the user configured is left alone.
+        if (in_array((string) $read('MAIL_HOST'), ['', 'localhost', '127.0.0.1', '::1'], true)) {
+            $set('MAIL_HOST', 'mailpit');
+            // The container-internal port, not the published one (FORWARD_MAILPIT_PORT).
+            $set('MAIL_PORT', '1025');
+        }
+
+        // APP_URL follows the chosen host and SSL mode, carrying the published port
+        // whenever it is not the scheme's default. With no override this run, fall back
+        // to a port an earlier run persisted — otherwise a resume drops :8443.
+        $portKey = $ssl ? 'APP_HTTPS_PORT' : 'APP_PORT';
+        $appPort = $ports[$portKey] ?? (is_numeric($read($portKey)) ? (int) $read($portKey) : null);
+        $suffix = ($appPort !== null && $appPort !== ($ssl ? 443 : 80)) ? ':'.$appPort : '';
+
+        // Correct a URL for localhost or for the chosen host (scheme and port may have
+        // changed); leave a genuinely custom one alone.
+        $url = $read('APP_URL');
+
+        if ($url === null || preg_match('#^https?://(localhost|'.preg_quote($host, '#').')(:\d+)?/?$#', $url)) {
+            $set('APP_URL', ($ssl ? 'https' : 'http').'://'.$host.$suffix);
+        }
+
+        // Set missing or blank values; respect anything the user has already configured.
         $defaults = [
             'DB_HOST' => 'mysql',
             'DB_PORT' => '3306',
@@ -872,19 +870,15 @@ class DockerEnvironment extends Environment
         ];
 
         foreach ($defaults as $key => $value) {
-            if (preg_match('/^'.preg_quote($key, '/').'=(.*)$/m', $env, $m)) {
-                if (trim($m[1]) === '') {
-                    $env = preg_replace('/^'.preg_quote($key, '/').'=.*$/m', "{$key}={$value}", $env);
-                }
-            } else {
-                $env .= "\n{$key}={$value}";
+            if (($read($key) ?? '') === '') {
+                $set($key, $value);
             }
         }
 
-        // Port overrides are forced, not defaulted: the value already there is the
-        // one that clashed.
+        // Port overrides are forced, not defaulted: the value already there is the one
+        // that clashed.
         foreach ($ports as $key => $port) {
-            $env = InstallCommand::setEnvLine($env, $key, (string) $port);
+            $set($key, (string) $port);
         }
 
         return $env;

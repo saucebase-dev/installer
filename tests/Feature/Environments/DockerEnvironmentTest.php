@@ -593,7 +593,8 @@ class DockerEnvironmentTest extends TestCase
 
     public function test_leaves_mysql_connection_unchanged(): void
     {
-        $input = "APP_URL=https://localhost\nDB_CONNECTION=mysql\nDB_HOST=mysql\nDB_PORT=3306\nDB_DATABASE=myapp\nDB_USERNAME=myapp\nDB_PASSWORD=secret\nMAIL_MAILER=smtp\n";
+        // An already-correct Docker .env must come back byte-identical.
+        $input = "APP_URL=https://localhost\nDB_CONNECTION=mysql\nDB_HOST=mysql\nDB_PORT=3306\nDB_DATABASE=myapp\nDB_USERNAME=myapp\nDB_PASSWORD=secret\nMAIL_MAILER=smtp\nMAIL_HOST=mailpit\nMAIL_PORT=1025\n";
         $result = $this->applyDefaults($input);
 
         $this->assertSame($input, $result);
@@ -674,6 +675,41 @@ class DockerEnvironmentTest extends TestCase
         $result = $this->applyDefaults("APP_NAME=Test\n");
 
         $this->assertStringContainsString('MAIL_MAILER=smtp', $result);
+    }
+
+    public function test_points_mail_at_the_mailpit_container(): void
+    {
+        // Compose interpolates ${MAIL_HOST} from .env, so "localhost" here reaches the
+        // app container verbatim — where it means the app itself, not Mailpit.
+        $result = $this->applyDefaults("MAIL_MAILER=smtp\nMAIL_HOST=localhost\nMAIL_PORT=1025\n");
+
+        $this->assertStringContainsString('MAIL_HOST=mailpit', $result);
+        $this->assertStringNotContainsString('MAIL_HOST=localhost', $result);
+    }
+
+    public function test_replaces_the_laravel_default_mail_host_and_port(): void
+    {
+        $result = $this->applyDefaults("MAIL_HOST=127.0.0.1\nMAIL_PORT=2525\n");
+
+        $this->assertStringContainsString('MAIL_HOST=mailpit', $result);
+        // 1025 is Mailpit's container-internal port, not the published one.
+        $this->assertStringContainsString('MAIL_PORT=1025', $result);
+    }
+
+    public function test_appends_mail_host_when_absent(): void
+    {
+        $result = $this->applyDefaults("APP_NAME=Test\n");
+
+        $this->assertStringContainsString('MAIL_HOST=mailpit', $result);
+        $this->assertStringContainsString('MAIL_PORT=1025', $result);
+    }
+
+    public function test_leaves_a_real_smtp_host_alone(): void
+    {
+        $result = $this->applyDefaults("MAIL_HOST=smtp.mailtrap.io\nMAIL_PORT=2525\n");
+
+        $this->assertStringContainsString('MAIL_HOST=smtp.mailtrap.io', $result);
+        $this->assertStringContainsString('MAIL_PORT=2525', $result);
     }
 
     public function test_sets_https_url_when_ssl_enabled(): void
@@ -829,6 +865,36 @@ class DockerEnvironmentTest extends TestCase
         $result = $this->applyDefaults("APP_HOST=myapp.test\nAPP_URL=https://staging.example.com\n", ssl: true);
 
         $this->assertStringContainsString('APP_URL=https://staging.example.com', $result);
+    }
+
+    public function test_comments_and_blank_lines_survive_a_full_pass(): void
+    {
+        // .env is a hand-edited file: the "# DB_HOST=..." hints tell the user what is
+        // configurable. This is why the writer is line-based rather than a parse of the
+        // file into an array and back.
+        $input = implode("\n", [
+            '# Application',
+            'APP_SLUG=acme',
+            '',
+            '# DB_DATABASE=${APP_SLUG}',
+            'DB_CONNECTION=sqlite',
+            '',
+        ]);
+
+        $result = $this->applyDefaults($input, ssl: true, ports: ['APP_HTTPS_PORT' => 8443]);
+
+        $this->assertStringContainsString('# Application', $result);
+        $this->assertStringContainsString('# DB_DATABASE=${APP_SLUG}', $result);
+        $this->assertStringContainsString('DB_CONNECTION=mysql', $result);
+    }
+
+    public function test_a_commented_key_is_not_mistaken_for_a_real_one(): void
+    {
+        // "# DB_HOST=localhost" must not read as DB_HOST being set.
+        $result = $this->applyDefaults("# DB_HOST=localhost\nDB_CONNECTION=sqlite\n");
+
+        $this->assertStringContainsString('DB_HOST=mysql', $result);
+        $this->assertStringContainsString('# DB_HOST=localhost', $result);
     }
 
     public function test_real_env_example_pattern_produces_valid_docker_env(): void
