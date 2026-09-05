@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `saucebase new <name>` — creates a new project (via `laravel/installer`) and runs the full install flow against it.
 - `saucebase install` — runs the install flow against an existing Saucebase app in the current directory (used internally by `new`, and available standalone).
 - `saucebase stack <vue|react>` — selects/switches the frontend framework in an app directory.
+- `saucebase docker:publish` — publishes the Docker stubs into an app directory (`--force` overwrites, `--ssl=no` picks the plain-HTTP nginx config).
 
 It is **not** a Laravel package — there is no service provider and no package discovery. It runs standalone via a minimal `Illuminate\Console\Application` (see `src/Console/Application.php`). Local PHP + Composer are the only universal prerequisites (same as `laravel/installer` itself). Docker stubs (`docker-compose.yml`, `Dockerfile`, `nginx.conf`, `php.ini`, `xdebug.ini`) live in `stubs/docker/` and are copied directly into the target app by `DockerEnvironment::publishStubs()` (no `vendor:publish`).
 
@@ -58,7 +59,7 @@ composer install
 **Docker flow** (`DockerEnvironment::boot()`):
 1. `promptForSsl()` — `--ssl=yes|no` if given, else `--force` ⇒ on, else prompt (requires mkcert)
 2. SSL gate: requested but no `mkcert` → FAILURE with install hint
-3. `publishStubs()` — **copies `stubs/docker/*` directly** into the target app (skips files that already exist); if SSL off, overwrites `docker/nginx.conf` with `nginx-no-ssl.conf`
+3. `publishStubs()` — delegates to the `docker:publish` command (non-interactively, so existing files are kept); if SSL off it publishes `nginx-no-ssl.conf` as `docker/nginx.conf`
 4. `generateSsl()` — mkcert for `*.localhost` (no-op if disabled or certs exist)
 5. `ensureEnvFile()` → `setDockerEnvDefaults()` → `applyDockerEnvDefaults()`: `DB_CONNECTION=mysql`, MySQL creds, `MAIL_MAILER=smtp`, `APP_URL=https://localhost` (or `http://` if SSL off)
 6. `startDocker()` — `docker compose restart` + `up -d --wait --build` (30 min timeout, streaming), cwd = target
