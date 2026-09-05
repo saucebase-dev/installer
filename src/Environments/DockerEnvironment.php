@@ -149,37 +149,11 @@ class DockerEnvironment extends Environment
     {
         $command->info('Publishing Docker stubs...');
 
-        $stubs = dirname(__DIR__, 2).'/stubs/docker';
-
-        foreach ([
-            'docker-compose.yml',
-            'docker/Dockerfile',
-            'docker/nginx.conf',
-            'docker/php.ini',
-            'docker/xdebug.ini',
-        ] as $file) {
-            $destination = $command->path($file);
-
-            if (file_exists($destination)) {
-                continue;
-            }
-
-            @mkdir(dirname($destination), 0755, true);
-
-            if (! copy($stubs.'/'.$file, $destination)) {
-                $command->warn("Failed to publish {$file}.");
-            }
-        }
-
-        if (! $this->ssl) {
-            $copied = copy(
-                $stubs.'/docker/nginx-no-ssl.conf',
-                $command->path('docker/nginx.conf'),
-            );
-            if (! $copied) {
-                $command->warn('Failed to write nginx.conf (no-SSL). Check that Docker stubs were published first.');
-            }
-        }
+        // Non-interactive: existing files are kept (the confirm defaults to "no").
+        $command->call('docker:publish', [
+            '--path' => $command->path(),
+            '--ssl' => $this->ssl ? 'yes' : 'no',
+        ]);
     }
 
     protected function generateSsl(InstallCommand $command): void

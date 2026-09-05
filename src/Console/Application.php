@@ -9,6 +9,7 @@ use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Facade;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Console\Commands\NewCommand;
+use Saucebase\Installer\Console\Commands\PublishDockerCommand;
 use Saucebase\Installer\Console\Commands\StackCommand;
 
 class Application
@@ -27,6 +28,7 @@ class Application
             NewCommand::class,
             InstallCommand::class,
             StackCommand::class,
+            PublishDockerCommand::class,
         ]);
 
         return $console;
