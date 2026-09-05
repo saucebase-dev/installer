@@ -51,7 +51,7 @@ class PublishDockerCommand extends Command
 
         if ($ssl !== null && $ssl !== '' && ! filter_var($ssl, FILTER_VALIDATE_BOOLEAN)) {
             if (! copy($stubs.'/docker/nginx-no-ssl.conf', $base.'/docker/nginx.conf')) {
-                $this->warn('Failed to write nginx.conf (no-SSL).');
+                $this->warn('Failed to write nginx.conf (no-SSL). Check that Docker stubs were published first.');
             }
         }
 

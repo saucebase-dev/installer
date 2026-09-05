@@ -149,10 +149,12 @@ class DockerEnvironment extends Environment
     {
         $command->info('Publishing Docker stubs...');
 
-        // Non-interactive: existing files are kept (the confirm defaults to "no").
+        // Forced non-interactive so existing files are kept silently, as the
+        // install flow has always done — never prompt to overwrite here.
         $command->call('docker:publish', [
             '--path' => $command->path(),
             '--ssl' => $this->ssl ? 'yes' : 'no',
+            '--no-interaction' => true,
         ]);
     }
 
