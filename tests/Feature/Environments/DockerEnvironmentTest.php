@@ -1384,7 +1384,6 @@ class DockerEnvironmentTest extends TestCase
         $this->assertSame('no', $command->calledWith['--ssl']);
         $this->assertTrue($command->calledWith['--no-interaction'], 'install must never prompt to overwrite Docker files');
     }
-
 }
 
 /**
