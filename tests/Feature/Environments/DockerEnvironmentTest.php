@@ -1348,6 +1348,42 @@ class DockerEnvironmentTest extends TestCase
 
         return $exposed->resolveModules($command);
     }
+
+    // -------------------------------------------------------------------------
+    // publishStubs
+    // -------------------------------------------------------------------------
+
+    public function test_publish_stubs_delegates_non_interactively_so_existing_files_are_never_prompted(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            public function publish(InstallCommand $command): void
+            {
+                $this->ssl = false;
+                $this->publishStubs($command);
+            }
+        };
+
+        $command = new class(null, [], ['path' => '/tmp/app']) extends FakeInstallCommand
+        {
+            /** @var array<string, mixed> */
+            public array $calledWith = [];
+
+            public function call($command, array $arguments = [])
+            {
+                $this->calledWith = ['command' => $command] + $arguments;
+
+                return 0;
+            }
+        };
+
+        $env->publish($command);
+
+        $this->assertSame('docker:publish', $command->calledWith['command']);
+        $this->assertSame('/tmp/app', $command->calledWith['--path']);
+        $this->assertSame('no', $command->calledWith['--ssl']);
+        $this->assertTrue($command->calledWith['--no-interaction'], 'install must never prompt to overwrite Docker files');
+    }
 }
 
 /**
