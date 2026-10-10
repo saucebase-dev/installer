@@ -30,7 +30,7 @@ class StackCommand extends Command
     private const SUPPORTED = ['vue', 'react'];
 
     /** Where saucebase/core keeps each framework's starter UI, relative to the app root. */
-    private const CORE_STACK = 'vendor/saucebase/core/stack';
+    private const CORE_STACK = 'vendor/saucebase/core/stubs/stack';
 
     private ?string $basePath;
 
