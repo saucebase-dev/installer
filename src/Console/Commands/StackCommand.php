@@ -13,7 +13,7 @@ class StackCommand extends Command
     protected $signature = 'stack
                             {stack? : The frontend stack to install (vue or react)}
                             {--path= : The Saucebase application directory (defaults to the current directory)}
-                            {--dev : Contributor dev mode — copy config files only, keep both source dirs}
+                            {--dev : Contributor dev mode — copy config files only and run the UI from saucebase/core}
                             {--reset : Reset to clean state with no framework selected}
                             {--no-skip-worktree : Do not mark generated files as skip-worktree in git}
                             {--no-install : Skip npm install after selecting the framework (dev mode)}
@@ -28,6 +28,9 @@ class StackCommand extends Command
     private const VIEW_FILES = ['app.blade.php'];
 
     private const SUPPORTED = ['vue', 'react'];
+
+    /** Where saucebase/core keeps each framework's starter UI, relative to the app root. */
+    private const CORE_STACK = 'vendor/saucebase/core/stack';
 
     private ?string $basePath;
 
@@ -87,7 +90,7 @@ class StackCommand extends Command
             return self::FAILURE;
         }
 
-        $sourceDir = $this->jsRoot."/{$framework}";
+        $sourceDir = $this->sourceDir($framework);
 
         if (! $this->files->isDirectory($sourceDir)) {
             $this->error("Source directory not found: {$sourceDir}");
@@ -102,8 +105,6 @@ class StackCommand extends Command
         $this->copyLockFile($framework);
         $this->copyViewFiles($framework);
         $this->writeFrontendJson($framework);
-        $this->files->deleteDirectory($this->jsRoot.'/vue');
-        $this->files->deleteDirectory($this->jsRoot.'/react');
         $this->files->deleteDirectory($this->basePath.'/stubs/saucebase/stack');
         $this->deployModuleFiles($framework);
         $this->flattenRecipeStubs($framework);
@@ -130,8 +131,9 @@ class StackCommand extends Command
         $this->copyViewFiles($framework);
 
         $ext = $this->appExtension($framework);
-        $this->files->put($this->jsRoot."/app.{$ext}", "import './{$framework}/app';\n");
-        $this->files->put($this->jsRoot."/ssr.{$ext}", "import './{$framework}/ssr';\n");
+        $source = '../../'.self::CORE_STACK."/{$framework}/js";
+        $this->files->put($this->jsRoot."/app.{$ext}", "import '{$source}/app';\n");
+        $this->files->put($this->jsRoot."/ssr.{$ext}", "import '{$source}/ssr';\n");
 
         // module entry points must be written before skipGeneratedFiles so their paths are discovered
         $this->updateModuleEntryPoints($framework);
@@ -199,7 +201,7 @@ class StackCommand extends Command
 
     private function copySourceFiles(string $framework): void
     {
-        $sourceDir = $this->jsRoot."/{$framework}";
+        $sourceDir = $this->sourceDir($framework);
 
         foreach ($this->files->allFiles($sourceDir) as $file) {
             $relativePath = $file->getRelativePathname();
@@ -437,11 +439,12 @@ class StackCommand extends Command
 
     private function rewritePaths(string $content, string $framework): string
     {
-        return str_replace(
-            ["resources/js/{$framework}/", "resources/js/{$framework}'"],
-            ['resources/js/', "resources/js'"],
-            $content
-        );
+        return str_replace(self::CORE_STACK."/{$framework}/js", 'resources/js', $content);
+    }
+
+    private function sourceDir(string $framework): string
+    {
+        return $this->basePath.'/'.self::CORE_STACK."/{$framework}/js";
     }
 
     private function appExtension(string $framework): string
