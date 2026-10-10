@@ -396,16 +396,6 @@ class StackCommandTest extends TestCase
         $this->assertFileExists($this->tmpDir.'/vendor/saucebase/core/stubs/stack/vue/js/pages/Index.vue');
     }
 
-    public function test_install_mode_removes_stack_stubs_directory(): void
-    {
-        $this->seedFakeStubs('vue');
-        $this->seedFakeSourceDir('vue');
-
-        $this->artisan('stack vue')->assertSuccessful();
-
-        $this->assertDirectoryDoesNotExist($this->tmpDir.'/stubs/saucebase/stack');
-    }
-
     public function test_install_mode_removes_framework_subdirs_from_modules(): void
     {
         $this->seedFakeStubs('vue');
@@ -555,14 +545,14 @@ class StackCommandTest extends TestCase
 
     private function seedFakeViewStub(string $framework, string $entry): void
     {
-        $viewDir = $this->tmpDir."/stubs/saucebase/stack/{$framework}/views";
+        $viewDir = $this->tmpDir."/vendor/saucebase/core/stubs/stack/{$framework}/views";
         $this->files->ensureDirectoryExists($viewDir);
         file_put_contents($viewDir.'/app.blade.php', "@vite(['{$entry}'])");
     }
 
     private function seedFakeStubs(string $framework): void
     {
-        $stubDir = $this->tmpDir."/stubs/saucebase/stack/{$framework}";
+        $stubDir = $this->tmpDir."/vendor/saucebase/core/stubs/stack/{$framework}/config";
         $this->files->ensureDirectoryExists($stubDir);
 
         file_put_contents($stubDir.'/vite.config.js', "import { saucebase } from './vendor/saucebase/core/resources/js/{$framework}/vite.ts';");

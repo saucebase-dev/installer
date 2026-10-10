@@ -29,7 +29,7 @@ class StackCommand extends Command
 
     private const SUPPORTED = ['vue', 'react'];
 
-    /** Where saucebase/core keeps each framework's starter UI, relative to the app root. */
+    /** Where saucebase/core keeps each framework's starter UI and config files, relative to the app root. */
     private const CORE_STACK = 'vendor/saucebase/core/stubs/stack';
 
     private ?string $basePath;
@@ -105,7 +105,6 @@ class StackCommand extends Command
         $this->copyLockFile($framework);
         $this->copyViewFiles($framework);
         $this->writeFrontendJson($framework);
-        $this->files->deleteDirectory($this->basePath.'/stubs/saucebase/stack');
         $this->deployModuleFiles($framework);
         $this->flattenRecipeStubs($framework);
 
@@ -218,7 +217,7 @@ class StackCommand extends Command
 
     private function copyConfigFiles(string $framework, bool $rewrite): void
     {
-        $sourceDir = $this->basePath."/stubs/saucebase/stack/{$framework}";
+        $sourceDir = $this->stubDir($framework).'/config';
 
         foreach (self::CONFIG_FILES as $filename) {
             $source = $sourceDir.'/'.$filename;
@@ -240,7 +239,7 @@ class StackCommand extends Command
 
     private function copyLockFile(string $framework): void
     {
-        $source = $this->basePath."/stubs/saucebase/stack/{$framework}/".self::LOCKFILE;
+        $source = $this->stubDir($framework).'/config/'.self::LOCKFILE;
         $destination = $this->basePath.'/'.self::LOCKFILE;
 
         if ($this->files->exists($source)) {
@@ -250,7 +249,7 @@ class StackCommand extends Command
 
     private function copyViewFiles(string $framework): void
     {
-        $sourceDir = $this->basePath."/stubs/saucebase/stack/{$framework}/views";
+        $sourceDir = $this->stubDir($framework).'/views';
 
         foreach (self::VIEW_FILES as $filename) {
             $source = $sourceDir.'/'.$filename;
@@ -444,7 +443,12 @@ class StackCommand extends Command
 
     private function sourceDir(string $framework): string
     {
-        return $this->basePath.'/'.self::CORE_STACK."/{$framework}/js";
+        return $this->stubDir($framework).'/js';
+    }
+
+    private function stubDir(string $framework): string
+    {
+        return $this->basePath.'/'.self::CORE_STACK."/{$framework}";
     }
 
     private function appExtension(string $framework): string
