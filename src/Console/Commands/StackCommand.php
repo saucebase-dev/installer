@@ -15,6 +15,8 @@ class StackCommand extends Command
                             {--path= : The Saucebase application directory (defaults to the current directory)}
                             {--dev : Contributor dev mode — copy config files only and run the UI from saucebase/core}
                             {--reset : Reset to clean state with no framework selected}
+                            {--sync : Contributor dev mode — copy resources/css edits back to saucebase/core}
+                            {--force : With --reset, discard resources/css edits that are not in saucebase/core}
                             {--no-skip-worktree : Do not mark generated files as skip-worktree in git}
                             {--no-install : Skip npm install after selecting the framework (dev mode)}
                             {--no-hint : Suppress the npm install reminder (used when invoked from the install flow)}';
@@ -50,6 +52,10 @@ class StackCommand extends Command
     {
         $this->basePath = $this->option('path') ?: ($this->basePath ?? getcwd());
         $this->jsRoot ??= $this->basePath.'/resources/js';
+
+        if ($this->option('sync')) {
+            return $this->runSync();
+        }
 
         if ($this->option('reset')) {
             return $this->runReset();
@@ -104,6 +110,7 @@ class StackCommand extends Command
         $this->copyConfigFiles($framework, rewrite: true);
         $this->copyLockFile($framework);
         $this->copyViewFiles($framework);
+        $this->copyCss(scansCore: false);
         $this->writeFrontendJson($framework);
         $this->deployModuleFiles($framework);
         $this->flattenRecipeStubs($framework);
@@ -128,6 +135,7 @@ class StackCommand extends Command
         $this->copyConfigFiles($framework, rewrite: false);
         $this->copyLockFile($framework);
         $this->copyViewFiles($framework);
+        $this->copyCss(scansCore: true);
 
         $ext = $this->appExtension($framework);
         $source = '../../'.self::CORE_STACK."/{$framework}/js";
@@ -157,6 +165,12 @@ class StackCommand extends Command
             $this->info('No framework selected — nothing to reset.');
 
             return self::SUCCESS;
+        }
+
+        if ($this->cssEdited() && ! $this->option('force')) {
+            $this->error('resources/css has changes that are not in saucebase/core. Run `saucebase stack --sync` to keep them, or `saucebase stack --reset --force` to discard them.');
+
+            return self::FAILURE;
         }
 
         $this->info("Resetting framework '{$framework}'...");
@@ -194,9 +208,88 @@ class StackCommand extends Command
         return self::SUCCESS;
     }
 
+    private function runSync(): int
+    {
+        if (($this->frontendJson()['dev'] ?? false) !== true) {
+            $this->error('Syncing CSS back to saucebase/core only works in a contributor checkout (`saucebase stack <framework> --dev`).');
+
+            return self::FAILURE;
+        }
+
+        $this->files->deleteDirectory($this->coreCssDir());
+        $this->files->copyDirectory($this->cssDir(), $this->coreCssDir());
+        $this->writeFrontendJson($this->getSelectedFramework(), dev: true);
+
+        $this->info('Copied resources/css to saucebase/core. Commit it there.');
+
+        return self::SUCCESS;
+    }
+
     // -------------------------------------------------------------------------
     // File operations
     // -------------------------------------------------------------------------
+
+    /**
+     * The CSS finds modules, node_modules and vendor by relative path, so it has to sit in
+     * resources/css even in a contributor checkout, where the rest of the UI runs from core.
+     */
+    private function copyCss(bool $scansCore): void
+    {
+        if (! $this->files->isDirectory($this->coreCssDir())) {
+            return;
+        }
+
+        $this->files->deleteDirectory($this->cssDir());
+        $this->files->copyDirectory($this->coreCssDir(), $this->cssDir());
+
+        if ($scansCore) {
+            return;
+        }
+
+        // Only a contributor checkout has Tailwind scan core's copy of the UI.
+        foreach ($this->files->allFiles($this->cssDir()) as $file) {
+            $this->files->put($file->getPathname(), preg_replace(
+                '/^.*'.preg_quote(self::CORE_STACK, '/').'.*\R/m',
+                '',
+                $this->files->get($file->getPathname()),
+            ));
+        }
+    }
+
+    /** Whether resources/css differs from what was copied out of core. */
+    private function cssEdited(): bool
+    {
+        $copied = $this->frontendJson()['css'] ?? null;
+
+        return $copied !== null && $copied !== $this->cssHash();
+    }
+
+    private function cssHash(): ?string
+    {
+        if (! $this->files->isDirectory($this->cssDir())) {
+            return null;
+        }
+
+        $files = [];
+
+        foreach ($this->files->allFiles($this->cssDir()) as $file) {
+            $files[$file->getRelativePathname()] = md5_file($file->getPathname());
+        }
+
+        ksort($files);
+
+        return md5(json_encode($files));
+    }
+
+    private function cssDir(): string
+    {
+        return $this->basePath.'/resources/css';
+    }
+
+    private function coreCssDir(): string
+    {
+        return $this->basePath.'/'.self::CORE_STACK.'/css';
+    }
 
     private function copySourceFiles(string $framework): void
     {
@@ -411,15 +504,15 @@ class StackCommand extends Command
 
     private function getSelectedFramework(): ?string
     {
+        return $this->frontendJson()['framework'] ?? null;
+    }
+
+    /** @return array<string, mixed> */
+    private function frontendJson(): array
+    {
         $path = $this->basePath.'/frontend.json';
 
-        if (! $this->files->exists($path)) {
-            return null;
-        }
-
-        $data = json_decode($this->files->get($path), true);
-
-        return $data['framework'] ?? null;
+        return $this->files->exists($path) ? (json_decode($this->files->get($path), true) ?? []) : [];
     }
 
     private function writeFrontendJson(string $framework, bool $dev = false): void
@@ -428,6 +521,8 @@ class StackCommand extends Command
 
         if ($dev) {
             $data['dev'] = true;
+            // Lets --reset tell edits made here from a copy that is merely older than core's.
+            $data['css'] = $this->cssHash();
         }
 
         $this->files->put(

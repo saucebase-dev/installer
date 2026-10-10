@@ -8,6 +8,8 @@ use Saucebase\Installer\Tests\TestCase;
 
 class StackCommandTest extends TestCase
 {
+    private const APP_CSS = "@import 'tailwindcss';\n@source '../../vendor/saucebase/core/stubs/stack/*/js';\n@source '../../modules/*/resources/js';\n";
+
     private Filesystem $files;
 
     private string $tmpDir;
@@ -540,6 +542,79 @@ class StackCommandTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // CSS
+    // -------------------------------------------------------------------------
+
+    public function test_dev_mode_copies_the_css_from_core(): void
+    {
+        $this->seedFakeStubs('vue');
+
+        $this->artisan('stack vue --dev')->assertSuccessful();
+
+        $this->assertSame(self::APP_CSS, file_get_contents($this->tmpDir.'/resources/css/app.css'));
+        $this->assertFileExists($this->tmpDir.'/resources/css/filament/admin/theme.css');
+    }
+
+    public function test_install_mode_copies_the_css_without_the_lines_that_scan_core(): void
+    {
+        $this->seedFakeStubs('vue');
+        $this->seedFakeSourceDir('vue');
+
+        $this->artisan('stack vue')->assertSuccessful();
+
+        $this->assertSame(
+            "@import 'tailwindcss';\n@source '../../modules/*/resources/js';\n",
+            file_get_contents($this->tmpDir.'/resources/css/app.css'),
+        );
+    }
+
+    public function test_reset_refuses_to_leave_css_edits_behind(): void
+    {
+        $this->seedFakeStubs('vue');
+        $this->artisan('stack vue --dev')->assertSuccessful();
+        file_put_contents($this->tmpDir.'/resources/css/app.css', '/* edited */');
+
+        $this->artisan('stack --reset')
+            ->assertFailed()
+            ->expectsOutputToContain('saucebase stack --sync');
+
+        $this->assertSame('vue', json_decode(file_get_contents($this->tmpDir.'/frontend.json'), true)['framework']);
+    }
+
+    public function test_reset_goes_ahead_when_the_css_is_untouched_or_forced(): void
+    {
+        $this->seedFakeStubs('vue');
+        $this->artisan('stack vue --dev')->assertSuccessful();
+        $this->artisan('stack --reset')->assertSuccessful();
+
+        $this->artisan('stack vue --dev')->assertSuccessful();
+        file_put_contents($this->tmpDir.'/resources/css/app.css', '/* edited */');
+        $this->artisan('stack --reset --force')->assertSuccessful();
+    }
+
+    public function test_sync_copies_css_edits_back_to_core(): void
+    {
+        $this->seedFakeStubs('vue');
+        $this->artisan('stack vue --dev')->assertSuccessful();
+        file_put_contents($this->tmpDir.'/resources/css/app.css', '/* edited */');
+        unlink($this->tmpDir.'/resources/css/filament/admin/theme.css');
+
+        $this->artisan('stack --sync')->assertSuccessful();
+
+        $core = $this->tmpDir.'/vendor/saucebase/core/stubs/stack/css';
+        $this->assertSame('/* edited */', file_get_contents($core.'/app.css'));
+        $this->assertFileDoesNotExist($core.'/filament/admin/theme.css');
+        $this->artisan('stack --reset')->assertSuccessful();
+    }
+
+    public function test_sync_needs_a_contributor_checkout(): void
+    {
+        $this->artisan('stack --sync')
+            ->assertFailed()
+            ->expectsOutputToContain('contributor');
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -562,6 +637,11 @@ class StackCommandTest extends TestCase
         file_put_contents($stubDir.'/eslint.config.js', '// eslint');
         file_put_contents($stubDir.'/components.json', '{}');
         $this->seedFakeViewStub($framework, $framework === 'react' ? 'app.tsx' : 'app.ts');
+
+        $cssDir = $this->tmpDir.'/vendor/saucebase/core/stubs/stack/css';
+        $this->files->ensureDirectoryExists($cssDir.'/filament/admin');
+        file_put_contents($cssDir.'/app.css', self::APP_CSS);
+        file_put_contents($cssDir.'/filament/admin/theme.css', '/* filament */');
     }
 
     private function seedFakeSourceDir(string $framework): void
