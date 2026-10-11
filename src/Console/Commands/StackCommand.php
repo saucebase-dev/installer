@@ -510,7 +510,7 @@ class StackCommand extends Command
     /** @return array<string, mixed> */
     private function frontendJson(): array
     {
-        $path = $this->basePath.'/frontend.json';
+        $path = $this->basePath.'/saucebase.json';
 
         return $this->files->exists($path) ? (json_decode($this->files->get($path), true) ?? []) : [];
     }
@@ -526,7 +526,7 @@ class StackCommand extends Command
         }
 
         $this->files->put(
-            $this->basePath.'/frontend.json',
+            $this->basePath.'/saucebase.json',
             json_encode($data, JSON_PRETTY_PRINT).PHP_EOL
         );
     }
@@ -561,7 +561,7 @@ class StackCommand extends Command
             ...array_map(fn (string $f) => "resources/views/{$f}", self::VIEW_FILES),
             "resources/js/app.{$ext}",
             "resources/js/ssr.{$ext}",
-            'frontend.json',
+            'saucebase.json',
         ];
 
         foreach (glob($this->basePath.'/modules/*/resources/js/app.ts') ?: [] as $path) {

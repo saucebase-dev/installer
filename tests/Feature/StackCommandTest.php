@@ -24,7 +24,7 @@ class StackCommandTest extends TestCase
         $this->files->makeDirectory($this->tmpDir.'/resources/views', 0755, true);
 
         // Seed initial tracked files so git checkout works in reset tests
-        file_put_contents($this->tmpDir.'/frontend.json', json_encode(['framework' => null]).PHP_EOL);
+        file_put_contents($this->tmpDir.'/saucebase.json', json_encode(['framework' => null]).PHP_EOL);
         file_put_contents($this->tmpDir.'/package.json', '{}');
         file_put_contents($this->tmpDir.'/vite.config.js', '// vite');
         file_put_contents($this->tmpDir.'/tsconfig.json', '{}');
@@ -73,7 +73,7 @@ class StackCommandTest extends TestCase
 
         $this->artisan('stack vue --dev')->assertSuccessful();
 
-        $data = json_decode(file_get_contents($this->tmpDir.'/frontend.json'), true);
+        $data = json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true);
         $this->assertSame('vue', $data['framework']);
         $this->assertTrue($data['dev']);
     }
@@ -239,7 +239,7 @@ class StackCommandTest extends TestCase
         $this->artisan('stack vue --dev --no-skip-worktree')
             ->assertSuccessful();
 
-        $data = json_decode(file_get_contents($this->tmpDir.'/frontend.json'), true);
+        $data = json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true);
         $this->assertSame('vue', $data['framework']);
     }
 
@@ -320,7 +320,7 @@ class StackCommandTest extends TestCase
             ->assertSuccessful()
             ->doesntExpectOutputToContain('Could not skip-worktree package.json')
             ->doesntExpectOutputToContain('Could not skip-worktree vite.config.js')
-            ->doesntExpectOutputToContain('Could not skip-worktree frontend.json');
+            ->doesntExpectOutputToContain('Could not skip-worktree saucebase.json');
     }
 
     public function test_reset_warns_when_file_cannot_be_restored(): void
@@ -351,7 +351,7 @@ class StackCommandTest extends TestCase
 
     public function test_install_mode_guards_when_framework_already_set(): void
     {
-        file_put_contents($this->tmpDir.'/frontend.json', json_encode(['framework' => 'vue']));
+        file_put_contents($this->tmpDir.'/saucebase.json', json_encode(['framework' => 'vue']));
 
         $this->artisan('stack react')
             ->assertFailed()
@@ -431,7 +431,7 @@ class StackCommandTest extends TestCase
 
         $this->artisan('stack vue')->assertSuccessful();
 
-        $data = json_decode(file_get_contents($this->tmpDir.'/frontend.json'), true);
+        $data = json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true);
         $this->assertSame('vue', $data['framework']);
         $this->assertArrayNotHasKey('dev', $data);
     }
@@ -466,7 +466,7 @@ class StackCommandTest extends TestCase
 
     public function test_reset_does_nothing_when_no_framework_selected(): void
     {
-        $this->files->delete($this->tmpDir.'/frontend.json');
+        $this->files->delete($this->tmpDir.'/saucebase.json');
 
         $this->artisan('stack --reset')
             ->assertSuccessful()
@@ -485,7 +485,7 @@ class StackCommandTest extends TestCase
 
         // git checkout restored originals
         $this->assertEquals('// vite', file_get_contents($this->tmpDir.'/vite.config.js'));
-        $data = json_decode(file_get_contents($this->tmpDir.'/frontend.json'), true);
+        $data = json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true);
         $this->assertNull($data['framework']);
     }
 
@@ -537,7 +537,7 @@ class StackCommandTest extends TestCase
         $this->seedFakeStubs('react');
         $this->artisan('stack react --dev')->assertSuccessful();
 
-        $data = json_decode(file_get_contents($this->tmpDir.'/frontend.json'), true);
+        $data = json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true);
         $this->assertSame('react', $data['framework']);
     }
 
@@ -578,7 +578,7 @@ class StackCommandTest extends TestCase
             ->assertFailed()
             ->expectsOutputToContain('saucebase stack --sync');
 
-        $this->assertSame('vue', json_decode(file_get_contents($this->tmpDir.'/frontend.json'), true)['framework']);
+        $this->assertSame('vue', json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true)['framework']);
     }
 
     public function test_reset_goes_ahead_when_the_css_is_untouched_or_forced(): void

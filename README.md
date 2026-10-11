@@ -96,7 +96,7 @@ saucebase stack vue
 saucebase stack react
 ```
 
-Copies the framework-specific source, config (`package.json`, `vite.config.js`, `tsconfig.json`, …), lockfile, and blade layout into place, removes the unused framework's directory, and records the choice in `frontend.json`.
+Copies the framework-specific source, config (`package.json`, `vite.config.js`, `tsconfig.json`, …), lockfile, and blade layout into place, removes the unused framework's directory, and records the choice in `saucebase.json`.
 
 **Options**
 
