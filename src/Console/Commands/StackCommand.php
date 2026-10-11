@@ -210,7 +210,7 @@ class StackCommand extends Command
 
     private function runSync(): int
     {
-        if (($this->frontendJson()['dev'] ?? false) !== true) {
+        if (($this->frontendJson()['contributor'] ?? false) !== true) {
             $this->error('Syncing CSS back to saucebase/core only works in a contributor checkout (`saucebase stack <framework> --dev`).');
 
             return self::FAILURE;
@@ -218,7 +218,7 @@ class StackCommand extends Command
 
         $this->files->deleteDirectory($this->coreCssDir());
         $this->files->copyDirectory($this->cssDir(), $this->coreCssDir());
-        $this->writeFrontendJson($this->getSelectedFramework(), dev: true);
+        $this->rememberCss();
 
         $this->info('Copied resources/css to saucebase/core. Commit it there.');
 
@@ -243,6 +243,8 @@ class StackCommand extends Command
         $this->files->copyDirectory($this->coreCssDir(), $this->cssDir());
 
         if ($scansCore) {
+            $this->rememberCss();
+
             return;
         }
 
@@ -259,9 +261,21 @@ class StackCommand extends Command
     /** Whether resources/css differs from what was copied out of core. */
     private function cssEdited(): bool
     {
-        $copied = $this->frontendJson()['css'] ?? null;
+        $remembered = $this->cssHashFile();
 
-        return $copied !== null && $copied !== $this->cssHash();
+        return $this->files->exists($remembered) && $this->files->get($remembered) !== $this->cssHash();
+    }
+
+    /** Lets --reset tell edits made here from a copy that is merely older than core's. */
+    private function rememberCss(): void
+    {
+        $this->files->ensureDirectoryExists(dirname($this->cssHashFile()));
+        $this->files->put($this->cssHashFile(), (string) $this->cssHash());
+    }
+
+    private function cssHashFile(): string
+    {
+        return $this->basePath.'/storage/framework/saucebase-css';
     }
 
     private function cssHash(): ?string
@@ -517,12 +531,10 @@ class StackCommand extends Command
 
     private function writeFrontendJson(string $framework, bool $dev = false): void
     {
-        $data = ['framework' => $framework];
+        $data = [...$this->frontendJson(), 'framework' => $framework];
 
         if ($dev) {
-            $data['dev'] = true;
-            // Lets --reset tell edits made here from a copy that is merely older than core's.
-            $data['css'] = $this->cssHash();
+            $data['contributor'] = true;
         }
 
         $this->files->put(

@@ -75,7 +75,22 @@ class StackCommandTest extends TestCase
 
         $data = json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true);
         $this->assertSame('vue', $data['framework']);
-        $this->assertTrue($data['dev']);
+        $this->assertTrue($data['contributor']);
+        $this->assertSame(['framework', 'contributor'], array_keys($data));
+    }
+
+    public function test_selecting_a_stack_keeps_the_other_settings(): void
+    {
+        $this->seedFakeStubs('vue');
+        $this->seedFakeSourceDir('vue');
+        file_put_contents($this->tmpDir.'/saucebase.json', json_encode(['framework' => null, 'ssr' => false]));
+
+        $this->artisan('stack vue')->assertSuccessful();
+
+        $this->assertSame(
+            ['framework' => 'vue', 'ssr' => false],
+            json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true),
+        );
     }
 
     public function test_dev_mode_writes_app_and_ssr_shims(): void
