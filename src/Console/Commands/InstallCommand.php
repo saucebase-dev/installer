@@ -138,7 +138,8 @@ class InstallCommand extends Command
 
     protected function captureStack(): void
     {
-        $stack = $this->argument('stack');
+        // An application that already has Saucebase chose its framework when it was installed.
+        $stack = $this->projectFramework() ?? $this->argument('stack');
 
         if (! $stack) {
             $stack = $this->isCI()
@@ -222,14 +223,60 @@ class InstallCommand extends Command
         return $this->domain ?? 'localhost';
     }
 
+    /** The framework Saucebase was installed with, or null when it is not installed yet. */
+    public function projectFramework(): ?string
+    {
+        $project = json_decode((string) @file_get_contents($this->path('saucebase.json')), true);
+
+        return $project['framework'] ?? null;
+    }
+
+    /**
+     * What turns a plain Laravel application into a Saucebase one, in order. Empty when
+     * Saucebase is already there, or in a contributor checkout, which runs the UI from core.
+     *
+     * @return list<list<string>>
+     */
+    public function coreInstallSteps(): array
+    {
+        if ($this->option('dev') || $this->projectFramework() !== null) {
+            return [];
+        }
+
+        return [
+            // Composer refuses an unlisted plugin outright when it cannot ask.
+            ['composer', 'config', 'allow-plugins.saucebase/module-installer', 'true'],
+            ['composer', 'require', 'saucebase/core', '--no-interaction'],
+            ['php', 'artisan', 'saucebase:install', (string) $this->getSelectedStack(), '--force'],
+        ];
+    }
+
+    public function installCore(): bool
+    {
+        foreach ($this->coreInstallSteps() as $step) {
+            if (! $this->runProcess($step, 600)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** @param  string[]  $command */
+    public function runProcess(array $command, int $timeout = 300): bool
+    {
+        $process = new Process($command, $this->targetPath());
+        $process->setTimeout($timeout);
+        $process->run();
+
+        return $process->isSuccessful();
+    }
+
+    /** A contributor checkout runs the UI from saucebase/core instead of owning a copy. */
     public function runStack(): void
     {
-        if ($this->selectedStack) {
-            $isDev = $this->option('dev') ? ['--dev' => true] : [];
-            $this->call('stack', array_merge(
-                ['stack' => $this->selectedStack, '--path' => $this->targetPath(), '--no-hint' => true],
-                $isDev,
-            ));
+        if ($this->selectedStack && $this->option('dev')) {
+            $this->call('stack', ['stack' => $this->selectedStack, '--path' => $this->targetPath(), '--dev' => true]);
         }
     }
 
@@ -332,13 +379,25 @@ class InstallCommand extends Command
 
         $this->generateApplicationKey();
 
+        $installed = false;
+        $this->components->task('Installing Saucebase', function () use (&$installed) {
+            return $installed = $this->installCore();
+        });
+
+        if (! $installed) {
+            return self::FAILURE;
+        }
+
         if (! $this->setupDatabase()) {
             return self::FAILURE;
         }
 
         $this->runStack();
-        $this->setupModules();
-        $this->rewriteCrossModuleImports();
+
+        if (! $this->setupModules()) {
+            return self::FAILURE;
+        }
+
         $this->createStorageLink();
         $this->clearCaches();
 
@@ -388,9 +447,9 @@ class InstallCommand extends Command
     /**
      * Name the app after its own directory, and record the host it will be served on.
      *
-     * The skeleton ships APP_NAME="Saucebase" / APP_SLUG=saucebase, and nothing used to
-     * change them — so every app shared a name, and (since applyDockerEnvDefaults()
-     * derives them from APP_SLUG) a database name too.
+     * A new application is called "Laravel" and has no APP_SLUG. Left alone, every app
+     * would share a name and (since applyDockerEnvDefaults() derives them from APP_SLUG)
+     * a database name too.
      */
     public function applyAppIdentity(bool $native = true): void
     {
@@ -418,7 +477,7 @@ class InstallCommand extends Command
     }
 
     /**
-     * Only a skeleton default or a blank is replaced, so a re-run never clobbers a
+     * Only a default or a blank is replaced, so a re-run never clobbers a
      * value the user has since edited.
      *
      * @param  bool  $native  Whether to set APP_URL here; under Docker it is owned by
@@ -427,14 +486,14 @@ class InstallCommand extends Command
     protected function applyIdentityToEnv(string $env, string $name, string $slug, string $host, bool $native = false): string
     {
         $replaceable = [
-            'APP_NAME' => ['Saucebase', str_contains($name, ' ') ? "\"{$name}\"" : $name],
-            'APP_SLUG' => ['saucebase', $slug],
+            'APP_NAME' => [['Laravel', 'Saucebase'], str_contains($name, ' ') ? "\"{$name}\"" : $name],
+            'APP_SLUG' => [['saucebase'], $slug],
         ];
 
-        foreach ($replaceable as $key => [$default, $value]) {
+        foreach ($replaceable as $key => [$defaults, $value]) {
             $current = self::readEnvLine($env, $key);
 
-            if ($current === null || $current === '' || $current === $default) {
+            if ($current === null || $current === '' || in_array($current, $defaults, true)) {
                 $env = self::setEnvLine($env, $key, $value);
             }
         }
@@ -469,7 +528,7 @@ class InstallCommand extends Command
 
         return preg_match($pattern, $env)
             ? preg_replace($pattern, "{$key}={$value}", $env)
-            : $env."\n{$key}={$value}";
+            : rtrim($env, "\n")."\n{$key}={$value}\n";
     }
 
     public function envHasAppKey(): bool
@@ -504,26 +563,25 @@ class InstallCommand extends Command
         return $ok;
     }
 
-    protected function setupModules(): void
+    /** False when a selected module could not be wired into the application. */
+    protected function setupModules(): bool
     {
         $opt = $this->option('modules');
 
         if ($opt === 'none') {
-            return;
+            return true;
         }
 
         // Fast path: skip Packagist discovery when all requested names are fully qualified
         if ($opt) {
             $names = array_values(array_filter(array_map(fn ($n) => strtolower(trim($n)), explode(',', $opt))));
             if ($names && ! array_filter($names, fn ($n) => ! str_contains($n, '/'))) {
-                $this->doInstallModules($names);
-
-                return;
+                return $this->doInstallModules($names);
             }
         }
 
         if (! $opt && empty($this->selectedModules) && ! $this->option('all-modules')) {
-            return;
+            return true;
         }
 
         $available = $this->fetchAvailableModules();
@@ -531,43 +589,38 @@ class InstallCommand extends Command
         if (empty($available)) {
             $this->components->warn('Could not fetch module list from Packagist.');
 
-            return;
+            return true;
         }
 
         $selected = $this->resolveModuleSelection($available);
 
         if (empty($selected)) {
-            return;
+            return true;
         }
 
-        $this->doInstallModules($selected);
+        return $this->doInstallModules($selected);
     }
 
-    protected function doInstallModules(array $selected): void
+    protected function doInstallModules(array $selected): bool
     {
         $this->newLine();
 
         // Phase 1: require all selected packages in one Composer run
         $ok = false;
         $this->components->task('Installing modules', function () use ($selected, &$ok) {
-            $process = new Process(
-                array_merge(['composer', 'require', '--no-interaction'], $selected),
-                $this->targetPath(),
-            );
-            $process->setTimeout(300);
-            $process->run();
-
-            return $ok = $process->isSuccessful();
+            return $ok = $this->runProcess(['composer', 'require', '--no-interaction', ...$selected]);
         });
 
         if (! $this->composerRequireSucceeded($ok, $selected)) {
             $this->components->warn('Module installation failed — skipping patches, sync, and migrations.');
 
-            return;
+            return false;
         }
 
         // Phase 2: apply any patches the modules ship for the host app
-        $this->applyModulePatches($selected);
+        if (! $this->applyModulePatches($selected)) {
+            return false;
+        }
 
         // Phase 3: sync module configs, then migrate + seed each module individually
         $this->components->task('Syncing modules', fn () => $this->runArtisan(['modules:sync'], 30));
@@ -585,33 +638,8 @@ class InstallCommand extends Command
                 return $this->runArtisan(['db:seed', "--module={$name}", '--force'], 60);
             });
         }
-    }
 
-    public function rewriteCrossModuleImports(): void
-    {
-        $frameworks = ['vue', 'react', 'svelte'];
-        $pattern = implode('|', array_map(fn ($f) => preg_quote($f, '#'), $frameworks));
-        $extensions = ['vue', 'ts', 'tsx', 'js'];
-        $moduleDirs = glob($this->path('modules/*/resources/js'), GLOB_ONLYDIR) ?: [];
-
-        foreach ($moduleDirs as $jsRoot) {
-            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($jsRoot));
-            foreach ($iterator as $file) {
-                if (! $file->isFile() || ! in_array($file->getExtension(), $extensions, true)) {
-                    continue;
-                }
-                $path = $file->getPathname();
-                $content = file_get_contents($path);
-                $rewritten = preg_replace(
-                    "#(@modules/[^/]+/resources/js/)({$pattern})/#",
-                    '$1',
-                    $content
-                );
-                if ($rewritten !== $content) {
-                    file_put_contents($path, $rewritten);
-                }
-            }
-        }
+        return true;
     }
 
     /**
@@ -670,42 +698,53 @@ class InstallCommand extends Command
             || file_exists($this->path('vendor/saucebase/'.strtolower($name).'/'.$seederFile));
     }
 
-    public function applyModulePatches(array $modules): void
+    /**
+     * Applies the patches each module ships to wire itself into the application.
+     *
+     * A patch already in place is skipped. One that does not apply stops the install:
+     * the module would be installed but not connected, and nothing else would say so.
+     *
+     * @param  string[]  $modules
+     */
+    public function applyModulePatches(array $modules): bool
     {
+        $conflicts = [];
+
         foreach ($modules as $package) {
             $name = Str::after($package, '/');
 
-            $dirs = array_filter([
-                $this->path("vendor/saucebase/{$name}/patches"),
-                $this->path("modules/{$name}/patches"),
-            ], 'is_dir');
+            foreach (["vendor/saucebase/{$name}/patches", "modules/{$name}/patches"] as $dir) {
+                foreach (glob($this->path($dir).'/*.patch') ?: [] as $patch) {
+                    // Applies in reverse: the change is already there.
+                    if ($this->gitApply($patch, '--reverse', '--check')) {
+                        continue;
+                    }
 
-            foreach ($dirs as $dir) {
-                foreach (glob("{$dir}/*.patch") ?: [] as $patch) {
-                    $label = basename($patch);
-
-                    $check = new Process(['git', 'apply', '--check', '--whitespace=nowarn', $patch]);
-                    $check->setWorkingDirectory($this->targetPath());
-                    $check->run();
-
-                    if (! $check->isSuccessful()) {
-                        $this->warn("Skipping {$label}: already applied or conflicts.");
+                    if ($this->gitApply($patch)) {
+                        $this->info('Applied patch: '.basename($patch));
 
                         continue;
                     }
 
-                    $apply = new Process(['git', 'apply', '--whitespace=nowarn', $patch]);
-                    $apply->setWorkingDirectory($this->targetPath());
-                    $apply->run();
-
-                    if ($apply->isSuccessful()) {
-                        $this->info("Applied patch: {$label}");
-                    } else {
-                        $this->warn("Failed to apply {$label}: ".$apply->getErrorOutput());
-                    }
+                    $conflicts[] = $dir.'/'.basename($patch);
                 }
             }
         }
+
+        foreach ($conflicts as $patch) {
+            $this->error("The patch {$patch} does not apply to this application. Apply its changes by hand, then run the install again.");
+        }
+
+        return $conflicts === [];
+    }
+
+    private function gitApply(string $patch, string ...$flags): bool
+    {
+        $process = new Process(['git', 'apply', '--whitespace=nowarn', ...$flags, $patch]);
+        $process->setWorkingDirectory($this->targetPath());
+        $process->run();
+
+        return $process->isSuccessful();
     }
 
     /**

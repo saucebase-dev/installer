@@ -18,10 +18,9 @@ class StackCommand extends Command
                             {--sync : Contributor dev mode — copy resources/css edits back to saucebase/core}
                             {--force : With --reset, discard resources/css edits that are not in saucebase/core}
                             {--no-skip-worktree : Do not mark generated files as skip-worktree in git}
-                            {--no-install : Skip npm install after selecting the framework (dev mode)}
-                            {--no-hint : Suppress the npm install reminder (used when invoked from the install flow)}';
+                            {--no-install : Skip npm install after selecting the framework (dev mode)}';
 
-    protected $description = 'Select the frontend framework stack (vue or react) for this Saucebase installation';
+    protected $description = 'Select the frontend framework stack (vue or react) of a contributor checkout';
 
     private const CONFIG_FILES = ['package.json', 'vite.config.js', 'tsconfig.json', 'eslint.config.js', 'components.json'];
 
@@ -77,50 +76,18 @@ class StackCommand extends Command
             return self::FAILURE;
         }
 
-        return $this->option('dev')
-            ? $this->runDevMode($framework)
-            : $this->runInstallMode($framework);
+        if (! $this->option('dev')) {
+            $this->error('An application gets its framework from `php artisan saucebase:install`. In a contributor checkout, run `saucebase stack '.$framework.' --dev`.');
+
+            return self::FAILURE;
+        }
+
+        return $this->runDevMode($framework);
     }
 
     // -------------------------------------------------------------------------
     // Modes
     // -------------------------------------------------------------------------
-
-    private function runInstallMode(string $framework): int
-    {
-        $current = $this->getSelectedFramework();
-
-        if ($current !== null) {
-            $this->error("Framework already set to \"{$current}\". Switching after install is not supported. Start a new project to use a different framework.");
-
-            return self::FAILURE;
-        }
-
-        $sourceDir = $this->sourceDir($framework);
-
-        if (! $this->files->isDirectory($sourceDir)) {
-            $this->error("Source directory not found: {$sourceDir}");
-
-            return self::FAILURE;
-        }
-
-        $this->info("Setting up {$framework}...");
-
-        $this->copySourceFiles($framework);
-        $this->copyConfigFiles($framework, rewrite: true);
-        $this->copyLockFile($framework);
-        $this->copyViewFiles($framework);
-        $this->copyCss(scansCore: false);
-        $this->writeFrontendJson($framework);
-        $this->deployModuleFiles($framework);
-        $this->flattenRecipeStubs($framework);
-
-        if (! $this->option('no-hint')) {
-            $this->info("Framework set to {$framework}. Run: npm install to install dependencies.");
-        }
-
-        return self::SUCCESS;
-    }
 
     private function runDevMode(string $framework): int
     {
@@ -132,10 +99,10 @@ class StackCommand extends Command
             return self::FAILURE;
         }
 
-        $this->copyConfigFiles($framework, rewrite: false);
+        $this->copyConfigFiles($framework);
         $this->copyLockFile($framework);
         $this->copyViewFiles($framework);
-        $this->copyCss(scansCore: true);
+        $this->copyCss();
 
         $ext = $this->appExtension($framework);
         $source = '../../'.self::CORE_STACK."/{$framework}/js";
@@ -145,7 +112,7 @@ class StackCommand extends Command
         // module entry points must be written before skipGeneratedFiles so their paths are discovered
         $this->updateModuleEntryPoints($framework);
 
-        $this->writeFrontendJson($framework, dev: true);
+        $this->writeProjectJson($framework);
         $this->skipGeneratedFiles($framework);
 
         if (! $this->option('no-install')) {
@@ -210,7 +177,7 @@ class StackCommand extends Command
 
     private function runSync(): int
     {
-        if (($this->frontendJson()['contributor'] ?? false) !== true) {
+        if (($this->projectJson()['contributor'] ?? false) !== true) {
             $this->error('Syncing CSS back to saucebase/core only works in a contributor checkout (`saucebase stack <framework> --dev`).');
 
             return self::FAILURE;
@@ -233,7 +200,7 @@ class StackCommand extends Command
      * The CSS finds modules, node_modules and vendor by relative path, so it has to sit in
      * resources/css even in a contributor checkout, where the rest of the UI runs from core.
      */
-    private function copyCss(bool $scansCore): void
+    private function copyCss(): void
     {
         if (! $this->files->isDirectory($this->coreCssDir())) {
             return;
@@ -242,20 +209,7 @@ class StackCommand extends Command
         $this->files->deleteDirectory($this->cssDir());
         $this->files->copyDirectory($this->coreCssDir(), $this->cssDir());
 
-        if ($scansCore) {
-            $this->rememberCss();
-
-            return;
-        }
-
-        // Only a contributor checkout has Tailwind scan core's copy of the UI.
-        foreach ($this->files->allFiles($this->cssDir()) as $file) {
-            $this->files->put($file->getPathname(), preg_replace(
-                '/^.*'.preg_quote(self::CORE_STACK, '/').'.*\R/m',
-                '',
-                $this->files->get($file->getPathname()),
-            ));
-        }
+        $this->rememberCss();
     }
 
     /** Whether resources/css differs from what was copied out of core. */
@@ -305,24 +259,7 @@ class StackCommand extends Command
         return $this->basePath.'/'.self::CORE_STACK.'/css';
     }
 
-    private function copySourceFiles(string $framework): void
-    {
-        $sourceDir = $this->sourceDir($framework);
-
-        foreach ($this->files->allFiles($sourceDir) as $file) {
-            $relativePath = $file->getRelativePathname();
-
-            if (in_array($relativePath, self::CONFIG_FILES)) {
-                continue;
-            }
-
-            $destination = $this->jsRoot.'/'.$relativePath;
-            $this->files->ensureDirectoryExists(dirname($destination));
-            $this->files->copy($file->getPathname(), $destination);
-        }
-    }
-
-    private function copyConfigFiles(string $framework, bool $rewrite): void
+    private function copyConfigFiles(string $framework): void
     {
         $sourceDir = $this->stubDir($framework).'/config';
 
@@ -334,13 +271,7 @@ class StackCommand extends Command
                 continue;
             }
 
-            $content = $this->files->get($source);
-
-            if ($rewrite) {
-                $content = $this->rewritePaths($content, $framework);
-            }
-
-            $this->files->put($destination, $content);
+            $this->files->copy($source, $destination);
         }
     }
 
@@ -368,85 +299,6 @@ class StackCommand extends Command
 
             $this->files->ensureDirectoryExists(dirname($destination));
             $this->files->put($destination, $this->files->get($source));
-        }
-    }
-
-    private function deployModuleFiles(string $framework): void
-    {
-        $others = array_diff(self::SUPPORTED, [$framework]);
-        $moduleDirs = glob($this->basePath.'/modules/*/', GLOB_ONLYDIR);
-
-        if (! $moduleDirs) {
-            return;
-        }
-
-        foreach ($moduleDirs as $moduleDir) {
-            $jsRoot = $moduleDir.'resources/js';
-
-            if (! $this->files->isDirectory($jsRoot)) {
-                continue;
-            }
-
-            $fwPath = $jsRoot.'/'.$framework;
-
-            if (! $this->files->isDirectory($fwPath)) {
-                $this->warn('Module '.basename($moduleDir)." does not support {$framework} — skipping.");
-
-                continue;
-            }
-
-            foreach ($this->files->allFiles($fwPath) as $file) {
-                $destination = $jsRoot.'/'.$file->getRelativePathname();
-                $this->files->ensureDirectoryExists(dirname($destination));
-                $this->files->copy($file->getPathname(), $destination);
-            }
-
-            $this->files->deleteDirectory($fwPath);
-            foreach ($others as $other) {
-                $this->files->deleteDirectory($jsRoot.'/'.$other);
-            }
-        }
-    }
-
-    private function flattenRecipeStubs(string $framework): void
-    {
-        $others = array_diff(self::SUPPORTED, [$framework]);
-        $recipeDirs = glob($this->basePath.'/stubs/saucebase/recipes/*/', GLOB_ONLYDIR);
-
-        if (! $recipeDirs) {
-            return;
-        }
-
-        foreach ($recipeDirs as $recipeDir) {
-            $jsRoot = $recipeDir.'resources/js';
-
-            if (! $this->files->isDirectory($jsRoot)) {
-                continue;
-            }
-
-            $fwPath = $jsRoot.'/'.$framework;
-
-            if (! $this->files->isDirectory($fwPath)) {
-                $this->warn('Recipe '.basename($recipeDir)." does not support {$framework} — skipping.");
-
-                continue;
-            }
-
-            foreach ($this->files->allFiles($fwPath) as $file) {
-                $destination = $jsRoot.'/'.$file->getRelativePathname();
-                $this->files->ensureDirectoryExists(dirname($destination));
-                $this->files->copy($file->getPathname(), $destination);
-            }
-
-            $this->files->deleteDirectory($fwPath);
-            foreach ($others as $other) {
-                $this->files->deleteDirectory($jsRoot.'/'.$other);
-            }
-
-            // Vue's flat entry is app.ts; React's is app.tsx. Remove the stale proxy.
-            if ($framework !== 'vue' && $this->files->exists($jsRoot.'/app.ts')) {
-                $this->files->delete($jsRoot.'/app.ts');
-            }
         }
     }
 
@@ -518,39 +370,23 @@ class StackCommand extends Command
 
     private function getSelectedFramework(): ?string
     {
-        return $this->frontendJson()['framework'] ?? null;
+        return $this->projectJson()['framework'] ?? null;
     }
 
     /** @return array<string, mixed> */
-    private function frontendJson(): array
+    private function projectJson(): array
     {
         $path = $this->basePath.'/saucebase.json';
 
         return $this->files->exists($path) ? (json_decode($this->files->get($path), true) ?? []) : [];
     }
 
-    private function writeFrontendJson(string $framework, bool $dev = false): void
+    private function writeProjectJson(string $framework): void
     {
-        $data = [...$this->frontendJson(), 'framework' => $framework];
-
-        if ($dev) {
-            $data['contributor'] = true;
-        }
-
         $this->files->put(
             $this->basePath.'/saucebase.json',
-            json_encode($data, JSON_PRETTY_PRINT).PHP_EOL
+            json_encode([...$this->projectJson(), 'framework' => $framework, 'contributor' => true], JSON_PRETTY_PRINT).PHP_EOL
         );
-    }
-
-    private function rewritePaths(string $content, string $framework): string
-    {
-        return str_replace(self::CORE_STACK."/{$framework}/js", 'resources/js', $content);
-    }
-
-    private function sourceDir(string $framework): string
-    {
-        return $this->stubDir($framework).'/js';
     }
 
     private function stubDir(string $framework): string

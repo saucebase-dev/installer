@@ -439,12 +439,80 @@ class DockerEnvironmentTest extends TestCase
             public function promptForModules(): void {}
 
             public function displaySuccess(array $steps = []): void {}
-
-            public function rewriteCrossModuleImports(): void {}
         };
 
         $result = $env->run($command);
         $this->assertSame(Command::FAILURE, $result);
+    }
+
+    public function test_boot_installs_saucebase_in_the_container_and_fails_when_it_cannot(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            /** @var string[] */
+            public array $ran = [];
+
+            protected function beforePrompts(InstallCommand $command): ?int
+            {
+                return null;
+            }
+
+            protected function publishStubs(InstallCommand $command): void {}
+
+            protected function generateSsl(InstallCommand $command): void {}
+
+            protected function setDockerEnvDefaults(InstallCommand $command): void {}
+
+            protected function checkPorts(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function configureNginx(InstallCommand $command): void {}
+
+            protected function startDocker(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function runComposerInContainer(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
+            {
+                $this->ran[] = implode(' ', $args);
+
+                return ! str_contains(implode(' ', $args), 'saucebase:install');
+            }
+        };
+
+        $command = new class extends FakeInstallCommand
+        {
+            public function __construct()
+            {
+                parent::__construct('vue', [], ['path' => sys_get_temp_dir()]);
+            }
+
+            public function ensureEnvFile(): bool
+            {
+                return true;
+            }
+
+            public function applyAppIdentity(bool $native = true): void {}
+
+            public function promptForModules(): void {}
+
+            public function displayFailure(?string $step = null, array $resumeOptions = []): void {}
+        };
+
+        $this->assertSame(Command::FAILURE, $env->run($command));
+        $this->assertSame([
+            'composer config allow-plugins.saucebase/module-installer true',
+            'composer require saucebase/core --no-interaction',
+            'php artisan saucebase:install vue --force',
+        ], $env->ran);
     }
 
     // -------------------------------------------------------------------------
@@ -1384,7 +1452,6 @@ class DockerEnvironmentTest extends TestCase
         $this->assertSame('no', $command->calledWith['--ssl']);
         $this->assertTrue($command->calledWith['--no-interaction'], 'install must never prompt to overwrite Docker files');
     }
-
 }
 
 /**

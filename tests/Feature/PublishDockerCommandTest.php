@@ -30,6 +30,29 @@ class PublishDockerCommandTest extends TestCase
         }
     }
 
+    public function test_the_image_can_process_images(): void
+    {
+        $this->artisan("docker:publish --path={$this->tmp}")->assertSuccessful();
+
+        // Without GD the media library cannot make image conversions (blog covers, avatars).
+        $dockerfile = (string) file_get_contents($this->tmp.'/docker/Dockerfile');
+        $this->assertStringContainsString('docker-php-ext-configure gd --with-jpeg --with-webp --with-freetype', $dockerfile);
+        $this->assertStringContainsString("docker-php-ext-install \\\n    gd \\\n", $dockerfile);
+    }
+
+    public function test_a_script_the_application_serves_itself_reaches_it(): void
+    {
+        // Livewire serves its script from a route. Answering every missing .js with a 404
+        // leaves the admin panel blank.
+        foreach (['nginx.conf', 'nginx-no-ssl.conf'] as $file) {
+            $this->assertMatchesRegularExpression(
+                '/ttf\|eot\)\$ \{[^}]*try_files \$uri \/index\.php\?\$query_string;/',
+                (string) file_get_contents(dirname(__DIR__, 2).'/stubs/docker/docker/'.$file),
+                $file,
+            );
+        }
+    }
+
     public function test_it_keeps_existing_files_when_not_forced(): void
     {
         file_put_contents($this->tmp.'/docker-compose.yml', 'mine');

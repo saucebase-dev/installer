@@ -105,6 +105,12 @@ class DockerEnvironment extends Environment
             return $this->fail('Installing PHP dependencies');
         }
 
+        foreach ($command->coreInstallSteps() as $step) {
+            if (! $this->execInContainer($command, $step, timeout: 600)) {
+                return $this->fail('Installing Saucebase');
+            }
+        }
+
         if (! $this->generateAppKey($command)) {
             return $this->fail('Generating application key');
         }
@@ -123,7 +129,6 @@ class DockerEnvironment extends Environment
             return $this->fail('Installing modules');
         }
 
-        $command->rewriteCrossModuleImports();
         $this->createStorageLink($command);
         $this->clearCaches($command);
 
@@ -750,14 +755,8 @@ class DockerEnvironment extends Environment
 
     protected function runStack(InstallCommand $command): void
     {
-        if (! $stack = $command->getSelectedStack()) {
-            return;
-        }
-
-        $command->info("Setting up {$stack} stack...");
-
         // File operations on the host — the app directory is volume-mounted,
-        // and the stack command no longer exists inside the container.
+        // and the stack command does not exist inside the container.
         $command->runStack();
     }
 
@@ -783,7 +782,10 @@ class DockerEnvironment extends Environment
             return false;
         }
 
-        $command->applyModulePatches($modules);
+        if (! $command->applyModulePatches($modules)) {
+            return false;
+        }
+
         $this->execInContainer($command, ['php', 'artisan', 'modules:sync']);
         $this->execInContainer($command, ['php', 'artisan', 'migrate', '--force'], timeout: 300);
 

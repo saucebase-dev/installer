@@ -72,14 +72,15 @@ class TestableInstallCommand extends InstallCommand
         return $this->resolveModuleSelection($available);
     }
 
-    public function exposedSetupModules(): void
+    public function exposedSetupModules(): bool
     {
-        $this->setupModules();
+        return $this->setupModules();
     }
 
-    protected function doInstallModules(array $selected): void
+    protected function doInstallModules(array $selected): bool
     {
         // no-op — prevents composer require from running in unit tests
+        return true;
     }
 
     protected function fetchPackageFrameworks(string $package): array

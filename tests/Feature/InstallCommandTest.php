@@ -182,7 +182,7 @@ class InstallCommandTest extends TestCase
         $this->assertSame(0, $spy->stackCallCount, 'saucebase:stack must not fire during captureStack()');
     }
 
-    public function test_stack_command_is_called_exactly_once_during_install(): void
+    public function test_only_a_contributor_install_calls_the_stack_command(): void
     {
         $this->fakePackagistList();
         $spy = (object) ['stackCallCount' => 0];
@@ -204,12 +204,20 @@ class InstallCommandTest extends TestCase
 
                 protected function generateApplicationKey(): void {}
 
+                public function installCore(): bool
+                {
+                    return true;
+                }
+
                 protected function setupDatabase(): bool
                 {
                     return true;
                 }
 
-                protected function setupModules(): void {}
+                protected function setupModules(): bool
+                {
+                    return true;
+                }
 
                 protected function createStorageLink(): void {}
 
@@ -236,9 +244,12 @@ class InstallCommandTest extends TestCase
             return $cmd;
         })());
 
+        // An application gets its UI from `php artisan saucebase:install`, not from the stack command.
         $this->artisan('install vue --all-modules')->assertSuccessful();
+        $this->assertSame(0, $spy->stackCallCount);
 
-        $this->assertSame(1, $spy->stackCallCount, 'saucebase:stack must be called exactly once during install()');
+        $this->artisan('install vue --all-modules --dev')->assertSuccessful();
+        $this->assertSame(1, $spy->stackCallCount, 'A contributor checkout selects its stack exactly once.');
     }
 
     // -------------------------------------------------------------------------
@@ -278,12 +289,20 @@ class InstallCommandTest extends TestCase
 
                 protected function generateApplicationKey(): void {}
 
+                public function installCore(): bool
+                {
+                    return true;
+                }
+
                 protected function setupDatabase(): bool
                 {
                     return true;
                 }
 
-                protected function setupModules(): void {}
+                protected function setupModules(): bool
+                {
+                    return true;
+                }
 
                 protected function createStorageLink(): void {}
 
@@ -319,12 +338,20 @@ class InstallCommandTest extends TestCase
 
                 protected function generateApplicationKey(): void {}
 
+                public function installCore(): bool
+                {
+                    return true;
+                }
+
                 protected function setupDatabase(): bool
                 {
                     return true;
                 }
 
-                protected function setupModules(): void {}
+                protected function setupModules(): bool
+                {
+                    return true;
+                }
 
                 protected function createStorageLink(): void {}
 
@@ -455,14 +482,21 @@ class InstallCommandTest extends TestCase
 
                 protected function generateApplicationKey(): void {}
 
+                public function installCore(): bool
+                {
+                    return true;
+                }
+
                 protected function setupDatabase(): bool
                 {
                     return false;
                 }
 
-                protected function setupModules(): void
+                protected function setupModules(): bool
                 {
                     $this->spy->modulesSetupCalled = true;
+
+                    return true;
                 }
 
                 protected function createStorageLink(): void {}
@@ -649,44 +683,6 @@ class InstallCommandTest extends TestCase
 
         $this->assertFalse($cmd->fetchCalled, 'Packagist must not be fetched when all names are fully qualified');
     }
-
-    // -------------------------------------------------------------------------
-    // rewriteCrossModuleImports
-    // -------------------------------------------------------------------------
-
-    public function test_rewrite_cross_module_imports_strips_all_framework_segments(): void
-    {
-        $appDir = sys_get_temp_dir().'/sb-install-test-'.uniqid();
-        $jsRoot = $appDir.'/modules/sb-test-rewrite/resources/js';
-        @mkdir($jsRoot, 0755, true);
-        file_put_contents($jsRoot.'/app.ts', implode("\n", [
-            "import Foo from '@modules/other/resources/js/vue/components/Foo.vue';",
-            "import Bar from '@modules/other/resources/js/react/Bar.tsx';",
-        ]));
-
-        try {
-            $cmd = new TestableInstallCommand;
-            $cmd->fakeOptions = ['path' => $appDir];
-            $cmd->rewriteCrossModuleImports();
-
-            $result = file_get_contents($jsRoot.'/app.ts');
-            $this->assertStringContainsString('@modules/other/resources/js/components/Foo.vue', $result);
-            $this->assertStringContainsString('@modules/other/resources/js/Bar.tsx', $result);
-            $this->assertStringNotContainsString('/vue/', $result);
-            $this->assertStringNotContainsString('/react/', $result);
-        } finally {
-            @unlink($jsRoot.'/app.ts');
-            @rmdir($jsRoot);
-            @rmdir($appDir.'/modules/sb-test-rewrite/resources');
-            @rmdir($appDir.'/modules/sb-test-rewrite');
-            @rmdir($appDir.'/modules');
-            @rmdir($appDir);
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
 
     private function fakePackagistList(): void
     {
