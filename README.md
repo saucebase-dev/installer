@@ -89,24 +89,26 @@ Takes an optional `stack` argument (`vue`/`react`) and the same `--driver`, `--s
 
 ### `saucebase stack <vue|react>`
 
-Selects or switches the frontend framework for an app.
+Selects the frontend framework of a **contributor checkout**, one with `saucebase/core` in `vendor/`. An installed app has its framework chosen by `saucebase new` or `saucebase install` and does not use this command.
 
 ```bash
-saucebase stack vue
-saucebase stack react
+saucebase stack vue --dev
+saucebase stack react --dev
 ```
 
-Copies the framework-specific source, config (`package.json`, `vite.config.js`, `tsconfig.json`, …), lockfile, and blade layout into place, removes the unused framework's directory, and records the choice in `saucebase.json`.
+Copies the framework's config (`package.json`, `vite.config.js`, `tsconfig.json`, …), lockfile, blade layout and CSS from `vendor/saucebase/core/stubs/stack` into place, and records the choice in `saucebase.json`. The UI source is not copied: the app reads it from `saucebase/core`.
 
 **Options**
 
 | Option | Description |
 |--------|-------------|
 | `--path=<dir>` | Target app directory (defaults to the current directory) |
-| `--dev` | Contributor mode — config only, keeps both source dirs, uses git `skip-worktree`, runs `npm install` |
+| `--dev` | Contributor mode: copies the config files, runs the UI from `saucebase/core`, runs `npm install` |
+| `--sync` | Copies `resources/css` edits back to `saucebase/core` |
 | `--reset` | Reverts generated files to their pre-selection state |
-
-> **Note:** Framework selection is permanent for a given installation. To switch, start a new project or use `--reset` (dev mode).
+| `--force` | With `--reset`, discards `resources/css` edits that are not in `saucebase/core` |
+| `--no-skip-worktree` | Does not mark the generated files as `skip-worktree` in git |
+| `--no-install` | Skips `npm install` |
 
 ## How it works
 

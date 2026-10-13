@@ -513,7 +513,8 @@ class InstallCommand extends Command
             $modified = $original;
 
             foreach ($keys as $key => [$default, $own]) {
-                $modified = preg_replace('/^(\s*"'.$key.'":\s*")'.preg_quote($default, '/').'(")/m', '${1}'.$own.'${2}', $modified, 1) ?? $modified;
+                $escaped = substr((string) json_encode($own, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 1, -1);
+                $modified = preg_replace_callback('/^(\s*"'.$key.'":\s*")'.preg_quote($default, '/').'(")/m', fn (array $match): string => $match[1].$escaped.$match[2], $modified, 1) ?? $modified;
             }
 
             if ($modified !== $original) {

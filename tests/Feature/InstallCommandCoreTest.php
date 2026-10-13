@@ -77,6 +77,17 @@ class InstallCommandCoreTest extends TestCase
         $this->assertStringContainsString('APP_NAME="Acme Shop"', $this->files->get($this->dir.'/.env'));
     }
 
+    public function test_a_name_with_quotes_or_dollar_signs_is_written_as_valid_json(): void
+    {
+        $this->files->ensureDirectoryExists($this->dir.'/public');
+        $this->files->put($this->dir.'/public/site.webmanifest', "{\n    \"name\": \"Saucebase\",\n    \"short_name\": \"Saucebase\"\n}\n");
+
+        $this->command(['app-name' => 'Big $1 "Deals"'])->nameProject();
+
+        $manifest = json_decode($this->files->get($this->dir.'/public/site.webmanifest'), true);
+        $this->assertSame('Big $1 "Deals"', $manifest['name']);
+    }
+
     public function test_it_keeps_a_name_the_project_already_chose(): void
     {
         $this->files->put($this->dir.'/composer.json', "{\n    \"name\": \"acme/shop\"\n}\n");
