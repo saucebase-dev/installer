@@ -3,6 +3,7 @@
 namespace Saucebase\Installer\Tests\Feature;
 
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Tests\TestCase;
 
@@ -41,8 +42,50 @@ class InstallCommandCoreTest extends TestCase
             // Composer refuses an unlisted plugin outright when it cannot ask.
             'composer config allow-plugins.saucebase/module-installer true',
             'composer require saucebase/core --no-interaction',
-            'php artisan saucebase:install react --force',
+            'php artisan saucebase:install react --force --no-interaction',
         ], $command->ran);
+    }
+
+    public function test_it_names_the_project_after_its_directory(): void
+    {
+        $this->files->put($this->dir.'/composer.json', "{\n    \"\$schema\": \"https://getcomposer.org/schema.json\",\n    \"name\": \"laravel/laravel\",\n    \"type\": \"project\"\n}\n");
+        $this->files->put($this->dir.'/package.json', "{\n    \"private\": true,\n    \"name\": \"saucebase\",\n    \"type\": \"module\"\n}\n");
+
+        $this->files->ensureDirectoryExists($this->dir.'/public');
+        $this->files->put($this->dir.'/public/site.webmanifest', "{\n    \"name\": \"Saucebase\",\n    \"short_name\": \"Saucebase\",\n    \"display\": \"standalone\"\n}\n");
+
+        $this->command()->nameProject();
+
+        $slug = basename($this->dir);
+        $name = Str::headline($slug);
+        $this->assertStringContainsString("\"name\": \"{$name}\",\n    \"short_name\": \"{$name}\",", $this->files->get($this->dir.'/public/site.webmanifest'));
+        $this->assertStringContainsString("\"name\": \"app/{$slug}\",\n    \"type\": \"project\"", $this->files->get($this->dir.'/composer.json'));
+        $this->assertStringContainsString("\"name\": \"{$slug}\",\n    \"type\": \"module\"", $this->files->get($this->dir.'/package.json'));
+    }
+
+    public function test_the_app_can_be_called_something_other_than_its_directory(): void
+    {
+        $this->files->ensureDirectoryExists($this->dir.'/public');
+        $this->files->put($this->dir.'/public/site.webmanifest', "{\n    \"name\": \"Saucebase\",\n    \"short_name\": \"Saucebase\"\n}\n");
+        $this->files->put($this->dir.'/.env', "APP_NAME=Laravel\n");
+
+        $command = $this->command(['app-name' => 'Acme Shop']);
+        $command->applyAppIdentity();
+        $command->nameProject();
+
+        $this->assertStringContainsString('"name": "Acme Shop"', $this->files->get($this->dir.'/public/site.webmanifest'));
+        $this->assertStringContainsString('APP_NAME="Acme Shop"', $this->files->get($this->dir.'/.env'));
+    }
+
+    public function test_it_keeps_a_name_the_project_already_chose(): void
+    {
+        $this->files->put($this->dir.'/composer.json', "{\n    \"name\": \"acme/shop\"\n}\n");
+        $this->files->put($this->dir.'/package.json', "{\n    \"name\": \"shop\"\n}\n");
+
+        $this->command()->nameProject();
+
+        $this->assertStringContainsString('"name": "acme/shop"', $this->files->get($this->dir.'/composer.json'));
+        $this->assertStringContainsString('"name": "shop"', $this->files->get($this->dir.'/package.json'));
     }
 
     public function test_it_leaves_an_application_that_already_has_saucebase(): void
@@ -142,6 +185,8 @@ class CoreInstallCommand extends TestableInstallCommand
 
         return InstallCommand::doInstallModules($selected);
     }
+
+    public function info($string, $verbosity = null): void {}
 
     public function newLine($count = 1): static
     {

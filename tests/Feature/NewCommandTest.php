@@ -39,6 +39,17 @@ class NewCommandTest extends TestCase
     }
 
     /** A template brings its own framework, which is only known once its files are there. */
+    public function test_the_chosen_app_name_reaches_the_install(): void
+    {
+        $command = $this->command(['force' => true]);
+
+        $this->assertArrayNotHasKey('--app-name', $command->exposedInstallArguments('acme', 'vue'));
+
+        $command->appName = 'Acme Shop';
+
+        $this->assertSame('Acme Shop', $command->exposedInstallArguments('acme', 'vue')['--app-name']);
+    }
+
     public function test_a_template_leaves_the_framework_and_modules_to_the_install(): void
     {
         $command = $this->command(['using' => 'vendor/template']);
@@ -78,6 +89,8 @@ class TestableNewCommand extends NewCommand
     /** @return array<string, mixed> */
     public function exposedInstallArguments(string $name, ?string $stack): array
     {
-        return $this->installArguments($name, new NativeEnvironment, $stack, null, null);
+        return $this->installArguments($name, new NativeEnvironment, $stack, null, null, appName: $this->appName);
     }
+
+    public ?string $appName = null;
 }

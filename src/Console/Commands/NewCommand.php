@@ -4,6 +4,7 @@ namespace Saucebase\Installer\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Application;
 use Saucebase\Installer\Console\Commands\Concerns\DisplaysBanner;
 use Saucebase\Installer\Environments\Environment;
@@ -26,6 +27,7 @@ class NewCommand extends Command
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--ssl= : Enable HTTPS with mkcert for docker (yes/no) — prompted if omitted}
                             {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
+                            {--app-name= : What the app is called (defaults to its directory name) — prompted if omitted}
                             {--using= : A Saucebase template to start from, instead of a plain Laravel application}
                             {--dev : Dev environment}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
@@ -46,6 +48,11 @@ class NewCommand extends Command
             placeholder: 'E.g. my-app',
             required: 'The project name is required.',
         );
+
+        // The directory name is the default: a brand often differs from the folder it lives in.
+        $appName = $this->option('app-name') ?: ($this->input->isInteractive()
+            ? text(label: 'What should the app be called?', default: Str::headline($name), required: true)
+            : null);
 
         $driver = $this->resolveDriver();
 
@@ -87,7 +94,7 @@ class NewCommand extends Command
 
         $this->line('  Setup continues below - see the final summary for the real next steps.');
 
-        $result = $this->call('install', $this->installArguments($name, $driver, $stack, $ssl, $modules, $domain));
+        $result = $this->call('install', $this->installArguments($name, $driver, $stack, $ssl, $modules, $domain, $appName));
 
         if ($result === self::SUCCESS) {
             $this->saveDriverPreference($driver->name());
@@ -219,7 +226,7 @@ class NewCommand extends Command
      * @param  string[]|null  $modules
      * @return array<string, mixed>
      */
-    protected function installArguments(string $name, Environment $driver, ?string $stack, ?bool $ssl, ?array $modules, string $domain = 'localhost'): array
+    protected function installArguments(string $name, Environment $driver, ?string $stack, ?bool $ssl, ?array $modules, string $domain = 'localhost', ?string $appName = null): array
     {
         $arguments = array_filter(['stack' => $stack]) + [
             '--path' => getcwd().'/'.$name,
@@ -230,6 +237,10 @@ class NewCommand extends Command
 
         if ($ssl !== null) {
             $arguments['--ssl'] = $ssl ? 'yes' : 'no';
+        }
+
+        if ($appName !== null) {
+            $arguments['--app-name'] = $appName;
         }
 
         if ($modules !== null) {

@@ -25,6 +25,7 @@ class InstallCommand extends Command
                             {--driver= : Environment driver (docker, native) — prompted if omitted}
                             {--ssl= : Enable HTTPS with mkcert for docker (yes/no) — prompted if omitted}
                             {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
+                            {--app-name= : What the app is called (defaults to its directory name)}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--modules= : Comma-separated list of modules to enable (e.g. Auth,Settings), or "none"}
@@ -247,7 +248,7 @@ class InstallCommand extends Command
             // Composer refuses an unlisted plugin outright when it cannot ask.
             ['composer', 'config', 'allow-plugins.saucebase/module-installer', 'true'],
             ['composer', 'require', 'saucebase/core', '--no-interaction'],
-            ['php', 'artisan', 'saucebase:install', (string) $this->getSelectedStack(), '--force'],
+            ['php', 'artisan', 'saucebase:install', (string) $this->getSelectedStack(), '--force', '--no-interaction'],
         ];
     }
 
@@ -388,6 +389,8 @@ class InstallCommand extends Command
             return self::FAILURE;
         }
 
+        $this->nameProject();
+
         if (! $this->setupDatabase()) {
             return self::FAILURE;
         }
@@ -464,7 +467,7 @@ class InstallCommand extends Command
 
         $modified = $this->applyIdentityToEnv(
             $original,
-            Str::headline($directory),
+            $this->appName(),
             Str::slug($directory),
             $this->getDomain(),
             native: $native,
@@ -473,6 +476,49 @@ class InstallCommand extends Command
         if ($modified !== $original) {
             file_put_contents($path, $modified);
             $this->info('Application name and host written to .env.');
+        }
+    }
+
+    /** What the app is called: the name asked for, or its directory's. */
+    private function appName(): string
+    {
+        return $this->optionOrNull('app-name') ?: Str::headline(basename($this->targetPath()));
+    }
+
+    /**
+     * Name the project after its directory in composer.json, package.json and the web
+     * manifest, which arrive called `laravel/laravel`, `saucebase` and `Saucebase`.
+     *
+     * Only those defaults are replaced, and only that line: the files keep their formatting.
+     */
+    public function nameProject(): void
+    {
+        $slug = Str::slug(basename($this->targetPath()));
+        $name = $this->appName();
+
+        // File => key => [the name it arrives with, the project's own].
+        $names = [
+            'composer.json' => ['name' => ['laravel/laravel', "app/{$slug}"]],
+            'package.json' => ['name' => ['saucebase', $slug]],
+            'public/site.webmanifest' => ['name' => ['Saucebase', $name], 'short_name' => ['Saucebase', $name]],
+        ];
+
+        foreach ($names as $file => $keys) {
+            $original = @file_get_contents($this->path($file));
+
+            if ($original === false) {
+                continue;
+            }
+
+            $modified = $original;
+
+            foreach ($keys as $key => [$default, $own]) {
+                $modified = preg_replace('/^(\s*"'.$key.'":\s*")'.preg_quote($default, '/').'(")/m', '${1}'.$own.'${2}', $modified, 1) ?? $modified;
+            }
+
+            if ($modified !== $original) {
+                file_put_contents($this->path($file), $modified);
+            }
         }
     }
 

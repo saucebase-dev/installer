@@ -22,6 +22,7 @@ class StackCommandTest extends TestCase
         $this->tmpDir = sys_get_temp_dir().'/saucebase-fw-test-'.uniqid();
         $this->files->makeDirectory($this->tmpDir.'/resources/js', 0755, true);
         $this->files->makeDirectory($this->tmpDir.'/resources/views', 0755, true);
+        $this->files->ensureDirectoryExists($this->tmpDir.'/vendor/saucebase/core');
 
         // Seed initial tracked files so git checkout works in reset tests
         file_put_contents($this->tmpDir.'/saucebase.json', json_encode(['framework' => null]).PHP_EOL);
@@ -363,6 +364,21 @@ class StackCommandTest extends TestCase
     // -------------------------------------------------------------------------
     // Applications
     // -------------------------------------------------------------------------
+
+    public function test_it_refuses_a_folder_without_saucebase(): void
+    {
+        $elsewhere = sys_get_temp_dir().'/saucebase-fw-elsewhere-'.uniqid();
+        $this->files->makeDirectory($elsewhere);
+
+        $this->artisan('stack vue --dev --path='.$elsewhere)
+            ->assertFailed()
+            ->expectsOutputToContain('has no vendor/saucebase/core');
+
+        // Nothing was written there.
+        $this->assertSame([], $this->files->allFiles($elsewhere, true));
+
+        $this->files->deleteDirectory($elsewhere);
+    }
 
     public function test_it_sends_an_application_to_the_core_install(): void
     {

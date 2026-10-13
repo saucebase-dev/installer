@@ -52,6 +52,13 @@ class StackCommand extends Command
         $this->basePath = $this->option('path') ?: ($this->basePath ?? getcwd());
         $this->jsRoot ??= $this->basePath.'/resources/js';
 
+        // Every mode writes into this folder, so it has to be the checkout and not wherever the shell happens to be.
+        if (! $this->files->isDirectory($this->basePath.'/vendor/saucebase/core')) {
+            $this->error("{$this->basePath} has no vendor/saucebase/core. Run this from the root of a Saucebase contributor checkout, or name it with --path.");
+
+            return self::FAILURE;
+        }
+
         if ($this->option('sync')) {
             return $this->runSync();
         }

@@ -111,6 +111,8 @@ class DockerEnvironment extends Environment
             }
         }
 
+        $command->nameProject();
+
         if (! $this->generateAppKey($command)) {
             return $this->fail('Generating application key');
         }
