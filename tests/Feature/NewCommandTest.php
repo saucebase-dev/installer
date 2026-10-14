@@ -3,6 +3,8 @@
 namespace Saucebase\Installer\Tests\Feature;
 
 use Saucebase\Installer\Console\Commands\NewCommand;
+use Saucebase\Installer\Environments\Environment;
+use Saucebase\Installer\Environments\HerdEnvironment;
 use Saucebase\Installer\Environments\NativeEnvironment;
 use Saucebase\Installer\Tests\TestCase;
 
@@ -50,6 +52,13 @@ class NewCommandTest extends TestCase
         $this->assertSame('Acme Shop', $command->exposedInstallArguments('acme', 'vue')['--app-name']);
     }
 
+    public function test_herd_is_secured_unless_ssl_is_turned_off(): void
+    {
+        $this->assertTrue($this->command([])->exposedSsl(new HerdEnvironment));
+        $this->assertFalse($this->command(['ssl' => 'no'])->exposedSsl(new HerdEnvironment));
+        $this->assertNull($this->command([])->exposedSsl(new NativeEnvironment));
+    }
+
     public function test_a_template_leaves_the_framework_and_modules_to_the_install(): void
     {
         $command = $this->command(['using' => 'vendor/template']);
@@ -93,4 +102,9 @@ class TestableNewCommand extends NewCommand
     }
 
     public ?string $appName = null;
+
+    public function exposedSsl(Environment $driver): ?bool
+    {
+        return $this->ssl($driver);
+    }
 }

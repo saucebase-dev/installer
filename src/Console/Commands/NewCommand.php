@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Application;
 use Saucebase\Installer\Console\Commands\Concerns\DisplaysBanner;
 use Saucebase\Installer\Environments\Environment;
+use Saucebase\Installer\Environments\HerdEnvironment;
 use Saucebase\Installer\ModuleRegistry;
 use Symfony\Component\Console\Input\ArrayInput;
 
@@ -21,7 +22,7 @@ class NewCommand extends Command
 
     protected $signature = 'new
                             {name? : The name of the new Saucebase application}
-                            {--driver= : Environment driver (docker, native) — prompted if omitted}
+                            {--driver= : Environment driver (docker, native, herd) — prompted if omitted}
                             {--stack= : Frontend stack (vue or react) — prompted if omitted}
                             {--modules= : Comma-separated list of modules to enable, or "none"}
                             {--all-modules : Enable and migrate all available modules without prompting}
@@ -66,7 +67,7 @@ class NewCommand extends Command
             return self::FAILURE;
         }
 
-        $ssl = $driver->name() === 'docker' ? $this->resolveSsl($driver) : null;
+        $ssl = $this->ssl($driver);
 
         if ($ssl === true && ! $driver->hasCommand('mkcert')) {
             $this->error('mkcert is required for SSL. Install it with: brew install mkcert');
@@ -112,11 +113,25 @@ class NewCommand extends Command
             options: [
                 'docker' => 'Docker - recommended for real projects: MySQL, Redis, Mailpit, HTTPS',
                 'native' => 'Native PHP - minimal setup, ideal for exploring',
+                // Offered only where it can run.
+                ...((new HerdEnvironment)->hasCommand('herd')
+                    ? ['herd' => 'Laravel Herd - served at https://<name>.test']
+                    : []),
             ],
             default: $this->savedDriverPreference() ?? 'docker',
         );
 
         return Environment::make($name);
+    }
+
+    /** Docker asks; Herd secures unless told not to; native serves plain HTTP. */
+    protected function ssl(Environment $driver): ?bool
+    {
+        return match ($driver->name()) {
+            'docker' => $this->resolveSsl($driver),
+            'herd' => $this->option('ssl') !== 'no',
+            default => null,
+        };
     }
 
     protected function resolveSsl(Environment $driver): bool
@@ -148,8 +163,8 @@ class NewCommand extends Command
             default => text(
                 label: 'Which hostname will you use for this app?',
                 default: 'localhost',
-                hint: 'Use localhost, or a custom domain such as '.strtolower($name).'.test',
-                validate: fn (string $value) => InstallCommand::normalizeDomain($value) === null
+                hint: 'Use localhost, or a custom domain such as ' . strtolower($name) . '.test',
+                validate: fn(string $value) => InstallCommand::normalizeDomain($value) === null
                     ? 'Enter a bare hostname, e.g. myapp.test'
                     : null,
             ),
@@ -229,7 +244,7 @@ class NewCommand extends Command
     protected function installArguments(string $name, Environment $driver, ?string $stack, ?bool $ssl, ?array $modules, string $domain = 'localhost', ?string $appName = null): array
     {
         $arguments = array_filter(['stack' => $stack]) + [
-            '--path' => getcwd().'/'.$name,
+            '--path' => getcwd() . '/' . $name,
             '--driver' => $driver->name(),
             '--domain' => $domain,
             '--no-logo' => true,
@@ -251,7 +266,7 @@ class NewCommand extends Command
 
         foreach (['all-modules', 'dev', 'fresh', 'force'] as $flag) {
             if ($this->option($flag)) {
-                $arguments['--'.$flag] = true;
+                $arguments['--' . $flag] = true;
             }
         }
 
@@ -334,7 +349,7 @@ class NewCommand extends Command
     {
         $home = $_SERVER['HOME'] ?? (getenv('HOME') ?: sys_get_temp_dir());
 
-        return $home.'/.config/saucebase/config.json';
+        return $home . '/.config/saucebase/config.json';
     }
 
     protected function savedDriverPreference(): ?string
@@ -355,6 +370,6 @@ class NewCommand extends Command
         $config = @json_decode((string) @file_get_contents($path), true) ?: [];
         $config['driver'] = $driver;
 
-        @file_put_contents($path, json_encode($config, JSON_PRETTY_PRINT).PHP_EOL);
+        @file_put_contents($path, json_encode($config, JSON_PRETTY_PRINT) . PHP_EOL);
     }
 }

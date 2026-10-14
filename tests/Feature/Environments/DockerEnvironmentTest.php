@@ -511,6 +511,7 @@ class DockerEnvironmentTest extends TestCase
         $this->assertSame([
             'composer config allow-plugins.saucebase/module-installer true',
             'composer require saucebase/core --no-interaction',
+            'composer require --dev saucebase/laravel-playwright --no-interaction',
             'php artisan saucebase:install vue --force --no-interaction',
         ], $env->ran);
     }

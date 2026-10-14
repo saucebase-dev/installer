@@ -42,6 +42,7 @@ class InstallCommandCoreTest extends TestCase
             // Composer refuses an unlisted plugin outright when it cannot ask.
             'composer config allow-plugins.saucebase/module-installer true',
             'composer require saucebase/core --no-interaction',
+            'composer require --dev saucebase/laravel-playwright --no-interaction',
             'php artisan saucebase:install react --force --no-interaction',
         ], $command->ran);
     }

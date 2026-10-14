@@ -18,6 +18,7 @@ saucebase new my-app
 - PHP ^8.4 and Composer (the only universal prerequisites — same as Laravel itself)
 - **Docker driver:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine with the Compose plugin; [mkcert](https://github.com/FiloSottile/mkcert) only if you enable SSL
 - **Native driver:** a local PHP capable of running the app; the CLI points you to [php.new](https://php.new) if anything is missing
+- **Herd driver:** [Laravel Herd](https://herd.laravel.com); offered in the prompt only when the `herd` command is found
 
 The CLI **checks and instructs** for prerequisites — it never installs them for you.
 
@@ -45,7 +46,7 @@ Runs a self-update check, then collects every choice upfront (driver → SSL if 
 
 | Option | Description |
 |--------|-------------|
-| `--driver=docker\|native` | Environment driver (skips the prompt) |
+| `--driver=docker\|native\|herd` | Environment driver (skips the prompt) |
 | `--stack=vue\|react` | Frontend stack (skips the prompt) |
 | `--ssl=yes\|no` | Enable HTTPS via mkcert, Docker only (skips the prompt) |
 | `--modules=auth,billing` | Install specific modules by name, or `none` to skip modules |
@@ -85,6 +86,8 @@ Takes an optional `stack` argument (`vue`/`react`) and the same `--driver`, `--s
 
 **Native driver** — copies `.env.example` → `.env`, generates `APP_KEY`, migrates and seeds, wires the frontend, installs modules, and links storage.
 
+**Herd driver** — the native install, then `herd link` and (unless `--ssl=no`) `herd secure`, so the app is served at `https://<name>.test`. The name comes from a `.test` `--domain`, otherwise the directory.
+
 ---
 
 ### `saucebase stack <vue|react>`
@@ -113,6 +116,19 @@ Copies the framework's config (`package.json`, `vite.config.js`, `tsconfig.json`
 ## How it works
 
 `saucebase` is a standalone `Illuminate\Console\Application` (not a Laravel package — no service provider). It operates on a target directory via `--path`, running artisan steps as subprocesses (`php <path>/artisan …`). Project creation is delegated to `laravel/installer`; everything after — environment, database, frontend, modules — is the Saucebase install flow.
+
+## Troubleshooting
+
+### SQLite: "database is locked"
+
+The native and Herd drivers use SQLite. By default it doesn't wait when another request or a queue worker is writing, and the second write fails. In `config/database.php`, under `sqlite`, set:
+
+```php
+'busy_timeout' => 5000,
+'journal_mode' => 'wal',
+```
+
+Writers then wait up to five seconds, and reads no longer block writes. The Docker driver uses MySQL and isn't affected.
 
 ## License
 
