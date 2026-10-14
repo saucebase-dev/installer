@@ -96,7 +96,7 @@ class InstallCommand extends Command
 
     public function path(string $relative = ''): string
     {
-        return $relative === '' ? $this->targetPath() : $this->targetPath() . '/' . $relative;
+        return $relative === '' ? $this->targetPath() : $this->targetPath().'/'.$relative;
     }
 
     /**
@@ -175,7 +175,7 @@ class InstallCommand extends Command
                 label: 'Which hostname will you use for this app?',
                 default: $current,
                 hint: 'Use localhost, or a custom domain such as myapp.test.',
-                validate: fn(string $value) => self::normalizeDomain($value) === null
+                validate: fn (string $value) => self::normalizeDomain($value) === null
                     ? 'Enter a bare hostname, e.g. myapp.test'
                     : null,
             ),
@@ -215,7 +215,7 @@ class InstallCommand extends Command
      */
     protected function warnWhenDomainDoesNotResolve(string $domain): void
     {
-        if ($domain === 'localhost' || gethostbyname($domain . '.') !== $domain . '.') {
+        if ($domain === 'localhost' || gethostbyname($domain.'.') !== $domain.'.') {
             return;
         }
 
@@ -339,7 +339,7 @@ class InstallCommand extends Command
         $this->error("These modules do not support the {$this->selectedStack} stack:");
 
         foreach ($incompatible as $package => $frameworks) {
-            $this->line("  {$package} — supports: " . implode(', ', $frameworks));
+            $this->line("  {$package} — supports: ".implode(', ', $frameworks));
         }
 
         $this->line('Drop them from --modules, or install with a stack they support.');
@@ -355,7 +355,7 @@ class InstallCommand extends Command
     {
         return array_values(array_filter(
             $packages,
-            fn(string $pkg) => in_array($framework, $this->fetchPackageFrameworks($pkg), true)
+            fn (string $pkg) => in_array($framework, $this->fetchPackageFrameworks($pkg), true)
         ));
     }
 
@@ -421,8 +421,8 @@ class InstallCommand extends Command
         $envOk = $this->ensureEnvFile();
         $keyOk = $this->envHasAppKey();
 
-        $this->components->task('Verifying .env', fn() => $envOk);
-        $this->components->task('Verifying app key', fn() => $keyOk);
+        $this->components->task('Verifying .env', fn () => $envOk);
+        $this->components->task('Verifying app key', fn () => $keyOk);
 
         if (! $envOk || ! $keyOk) {
             return self::FAILURE;
@@ -521,7 +521,7 @@ class InstallCommand extends Command
 
             foreach ($keys as $key => [$default, $own]) {
                 $escaped = substr((string) json_encode($own, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 1, -1);
-                $modified = preg_replace_callback('/^(\s*"' . $key . '":\s*")' . preg_quote($default, '/') . '(")/m', fn(array $match): string => $match[1] . $escaped . $match[2], $modified, 1) ?? $modified;
+                $modified = preg_replace_callback('/^(\s*"'.$key.'":\s*")'.preg_quote($default, '/').'(")/m', fn (array $match): string => $match[1].$escaped.$match[2], $modified, 1) ?? $modified;
             }
 
             if ($modified !== $original) {
@@ -561,7 +561,7 @@ class InstallCommand extends Command
         // (http://localhost:8000, which is what `composer dev` binds); only a custom
         // host needs correcting here.
         if ($native && $host !== 'localhost') {
-            $env = self::setEnvLine($env, 'APP_URL', 'http://' . $host);
+            $env = self::setEnvLine($env, 'APP_URL', 'http://'.$host);
         }
 
         return $env;
@@ -570,7 +570,7 @@ class InstallCommand extends Command
     /** A key's value from raw .env text, or null when the key is absent. */
     public static function readEnvLine(string $env, string $key): ?string
     {
-        return preg_match('/^' . preg_quote($key, '/') . '=(.*)$/m', $env, $m) === 1
+        return preg_match('/^'.preg_quote($key, '/').'=(.*)$/m', $env, $m) === 1
             ? trim(trim($m[1]), "\"'")
             : null;
     }
@@ -578,11 +578,11 @@ class InstallCommand extends Command
     /** Replace a key's value, appending the line when the key is absent. */
     public static function setEnvLine(string $env, string $key, string $value): string
     {
-        $pattern = '/^' . preg_quote($key, '/') . '=.*$/m';
+        $pattern = '/^'.preg_quote($key, '/').'=.*$/m';
 
         return preg_match($pattern, $env)
             ? preg_replace($pattern, "{$key}={$value}", $env)
-            : rtrim($env, "\n") . "\n{$key}={$value}\n";
+            : rtrim($env, "\n")."\n{$key}={$value}\n";
     }
 
     public function envHasAppKey(): bool
@@ -628,8 +628,8 @@ class InstallCommand extends Command
 
         // Fast path: skip Packagist discovery when all requested names are fully qualified
         if ($opt) {
-            $names = array_values(array_filter(array_map(fn($n) => strtolower(trim($n)), explode(',', $opt))));
-            if ($names && ! array_filter($names, fn($n) => ! str_contains($n, '/'))) {
+            $names = array_values(array_filter(array_map(fn ($n) => strtolower(trim($n)), explode(',', $opt))));
+            if ($names && ! array_filter($names, fn ($n) => ! str_contains($n, '/'))) {
                 return $this->doInstallModules($names);
             }
         }
@@ -677,9 +677,9 @@ class InstallCommand extends Command
         }
 
         // Phase 3: sync module configs, then migrate + seed each module individually
-        $this->components->task('Syncing modules', fn() => $this->runArtisan(['modules:sync'], 30));
+        $this->components->task('Syncing modules', fn () => $this->runArtisan(['modules:sync'], 30));
 
-        $this->components->task('Running module migrations', fn() => $this->runArtisan(['migrate', '--force'], 300));
+        $this->components->task('Running module migrations', fn () => $this->runArtisan(['migrate', '--force'], 300));
 
         foreach ($selected as $package) {
             $name = Str::after($package, '/');
@@ -748,8 +748,8 @@ class InstallCommand extends Command
     {
         $seederFile = 'database/seeders/DatabaseSeeder.php';
 
-        return file_exists($this->path('modules/' . strtolower($name) . '/' . $seederFile))
-            || file_exists($this->path('vendor/saucebase/' . strtolower($name) . '/' . $seederFile));
+        return file_exists($this->path('modules/'.strtolower($name).'/'.$seederFile))
+            || file_exists($this->path('vendor/saucebase/'.strtolower($name).'/'.$seederFile));
     }
 
     /**
@@ -768,19 +768,19 @@ class InstallCommand extends Command
             $name = Str::after($package, '/');
 
             foreach (["vendor/saucebase/{$name}/patches", "modules/{$name}/patches"] as $dir) {
-                foreach (glob($this->path($dir) . '/*.patch') ?: [] as $patch) {
+                foreach (glob($this->path($dir).'/*.patch') ?: [] as $patch) {
                     // Applies in reverse: the change is already there.
                     if ($this->gitApply($patch, '--reverse', '--check')) {
                         continue;
                     }
 
                     if ($this->gitApply($patch)) {
-                        $this->info('Applied patch: ' . basename($patch));
+                        $this->info('Applied patch: '.basename($patch));
 
                         continue;
                     }
 
-                    $conflicts[] = $dir . '/' . basename($patch);
+                    $conflicts[] = $dir.'/'.basename($patch);
                 }
             }
         }
@@ -825,7 +825,7 @@ class InstallCommand extends Command
         // 2. Modules passed via --modules option
         if ($modules = $this->option('modules')) {
             $requested = collect(explode(',', $modules))
-                ->map(fn($m) => strtolower(trim($m)))
+                ->map(fn ($m) => strtolower(trim($m)))
                 ->filter()
                 ->values();
 
@@ -843,12 +843,12 @@ class InstallCommand extends Command
 
     protected function createStorageLink(): void
     {
-        $this->components->task('Creating storage link', fn() => $this->runArtisan(['storage:link']));
+        $this->components->task('Creating storage link', fn () => $this->runArtisan(['storage:link']));
     }
 
     protected function clearCaches(): void
     {
-        $this->components->task('Clearing caches', fn() => $this->runArtisan(['optimize:clear']));
+        $this->components->task('Clearing caches', fn () => $this->runArtisan(['optimize:clear']));
     }
 
     protected function isCI(): bool
@@ -871,7 +871,7 @@ class InstallCommand extends Command
         return array_filter([
             $steps ? 'You can start your local development using:' : null,
             $steps ? Element::numberedList(array_values($steps)) : null,
-            'Learn more: ' . Element::link('https://github.com/saucebase-dev/saucebase'),
+            'Learn more: '.Element::link('https://github.com/saucebase-dev/saucebase'),
         ]);
     }
 
@@ -913,7 +913,7 @@ class InstallCommand extends Command
         $command = 'saucebase install';
 
         if ($this->selectedStack) {
-            $command .= ' ' . $this->selectedStack;
+            $command .= ' '.$this->selectedStack;
         }
 
         foreach ($resumeOptions as $option => $value) {
@@ -921,16 +921,16 @@ class InstallCommand extends Command
         }
 
         if ($this->domain !== null) {
-            $command .= ' --domain=' . $this->domain;
+            $command .= ' --domain='.$this->domain;
         }
 
         if ($modules = $this->resumeModules()) {
-            $command .= ' --modules=' . $modules;
+            $command .= ' --modules='.$modules;
         }
 
         foreach (['all-modules', 'dev', 'fresh', 'force'] as $flag) {
             if ($this->optionOrNull($flag)) {
-                $command .= ' --' . $flag;
+                $command .= ' --'.$flag;
             }
         }
 
@@ -938,7 +938,7 @@ class InstallCommand extends Command
 
         return $target === rtrim((string) getcwd(), '/')
             ? $command
-            : 'cd ' . $this->quotePath($target) . ' && ' . $command;
+            : 'cd '.$this->quotePath($target).' && '.$command;
     }
 
     /** The --modules value for a resume run, or null when selection was never resolved. */

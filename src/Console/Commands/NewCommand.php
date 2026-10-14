@@ -163,8 +163,8 @@ class NewCommand extends Command
             default => text(
                 label: 'Which hostname will you use for this app?',
                 default: 'localhost',
-                hint: 'Use localhost, or a custom domain such as ' . strtolower($name) . '.test',
-                validate: fn(string $value) => InstallCommand::normalizeDomain($value) === null
+                hint: 'Use localhost, or a custom domain such as '.strtolower($name).'.test',
+                validate: fn (string $value) => InstallCommand::normalizeDomain($value) === null
                     ? 'Enter a bare hostname, e.g. myapp.test'
                     : null,
             ),
@@ -244,7 +244,7 @@ class NewCommand extends Command
     protected function installArguments(string $name, Environment $driver, ?string $stack, ?bool $ssl, ?array $modules, string $domain = 'localhost', ?string $appName = null): array
     {
         $arguments = array_filter(['stack' => $stack]) + [
-            '--path' => getcwd() . '/' . $name,
+            '--path' => getcwd().'/'.$name,
             '--driver' => $driver->name(),
             '--domain' => $domain,
             '--no-logo' => true,
@@ -266,7 +266,7 @@ class NewCommand extends Command
 
         foreach (['all-modules', 'dev', 'fresh', 'force'] as $flag) {
             if ($this->option($flag)) {
-                $arguments['--' . $flag] = true;
+                $arguments['--'.$flag] = true;
             }
         }
 
@@ -349,7 +349,7 @@ class NewCommand extends Command
     {
         $home = $_SERVER['HOME'] ?? (getenv('HOME') ?: sys_get_temp_dir());
 
-        return $home . '/.config/saucebase/config.json';
+        return $home.'/.config/saucebase/config.json';
     }
 
     protected function savedDriverPreference(): ?string
@@ -370,6 +370,6 @@ class NewCommand extends Command
         $config = @json_decode((string) @file_get_contents($path), true) ?: [];
         $config['driver'] = $driver;
 
-        @file_put_contents($path, json_encode($config, JSON_PRETTY_PRINT) . PHP_EOL);
+        @file_put_contents($path, json_encode($config, JSON_PRETTY_PRINT).PHP_EOL);
     }
 }
