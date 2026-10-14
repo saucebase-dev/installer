@@ -28,7 +28,7 @@ class NewCommand extends Command
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--ssl= : Enable HTTPS with mkcert for docker (yes/no) — prompted if omitted}
                             {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
-                            {--app-name= : What the app is called (defaults to its directory name) — prompted if omitted}
+                            {--app-name= : What the app is called (defaults to its directory name), prompted if omitted}
                             {--using= : A Saucebase template to start from, instead of a plain Laravel application}
                             {--dev : Dev environment}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
@@ -95,7 +95,8 @@ class NewCommand extends Command
 
         $this->line('  Setup continues below - see the final summary for the real next steps.');
 
-        $result = $this->call('install', $this->installArguments($name, $driver, $stack, $ssl, $modules, $domain, $appName));
+        $arguments = $this->installArguments($name, $driver, $stack, $ssl, $modules, $domain, $appName);
+        $result = $this->call('install', $arguments);
 
         if ($result === self::SUCCESS) {
             $this->saveDriverPreference($driver->name());
@@ -181,7 +182,8 @@ class NewCommand extends Command
      */
     protected function resolveModulesUpfront(?string $stack): ?array
     {
-        if ($stack === null || $this->option('all-modules') || $this->option('modules') !== null || $this->option('dev')) {
+        if ($stack === null || $this->option('all-modules') || $this->option('dev')
+            || $this->option('modules') !== null) {
             return null;
         }
 
@@ -241,8 +243,15 @@ class NewCommand extends Command
      * @param  string[]|null  $modules
      * @return array<string, mixed>
      */
-    protected function installArguments(string $name, Environment $driver, ?string $stack, ?bool $ssl, ?array $modules, string $domain = 'localhost', ?string $appName = null): array
-    {
+    protected function installArguments(
+        string $name,
+        Environment $driver,
+        ?string $stack,
+        ?bool $ssl,
+        ?array $modules,
+        string $domain = 'localhost',
+        ?string $appName = null,
+    ): array {
         $arguments = array_filter(['stack' => $stack]) + [
             '--path' => getcwd().'/'.$name,
             '--driver' => $driver->name(),

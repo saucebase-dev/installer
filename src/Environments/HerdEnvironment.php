@@ -47,7 +47,8 @@ class HerdEnvironment extends NativeEnvironment
 
         $env = (string) file_get_contents($command->path('.env'));
         $env = InstallCommand::setEnvLine($env, 'APP_HOST', "{$site}.test");
-        $env = InstallCommand::setEnvLine($env, 'APP_URL', ($this->secure($command) ? 'https' : 'http')."://{$site}.test");
+        $scheme = $this->secure($command) ? 'https' : 'http';
+        $env = InstallCommand::setEnvLine($env, 'APP_URL', "{$scheme}://{$site}.test");
         file_put_contents($command->path('.env'), $env);
 
         return InstallCommand::SUCCESS;

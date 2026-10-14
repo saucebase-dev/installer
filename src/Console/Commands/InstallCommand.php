@@ -520,8 +520,10 @@ class InstallCommand extends Command
             $modified = $original;
 
             foreach ($keys as $key => [$default, $own]) {
-                $escaped = substr((string) json_encode($own, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 1, -1);
-                $modified = preg_replace_callback('/^(\s*"'.$key.'":\s*")'.preg_quote($default, '/').'(")/m', fn (array $match): string => $match[1].$escaped.$match[2], $modified, 1) ?? $modified;
+                $value = (string) json_encode($own, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $pattern = '/^(\s*"'.$key.'":\s*)'.preg_quote('"'.$default.'"', '/').'/m';
+                $replace = fn (array $match): string => $match[1].$value;
+                $modified = preg_replace_callback($pattern, $replace, $modified, 1) ?? $modified;
             }
 
             if ($modified !== $original) {
@@ -786,7 +788,8 @@ class InstallCommand extends Command
         }
 
         foreach ($conflicts as $patch) {
-            $this->error("The patch {$patch} does not apply to this application. Apply its changes by hand, then run the install again.");
+            $this->error("The patch {$patch} does not apply to this application. "
+                .'Apply its changes by hand, then run the install again.');
         }
 
         return $conflicts === [];

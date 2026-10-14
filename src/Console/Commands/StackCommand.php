@@ -54,7 +54,8 @@ class StackCommand extends Command
 
         // Every mode writes into this folder, so it has to be the checkout and not wherever the shell happens to be.
         if (! $this->files->isDirectory($this->basePath.'/vendor/saucebase/core')) {
-            $this->error("{$this->basePath} has no vendor/saucebase/core. Run this from the root of a Saucebase contributor checkout, or name it with --path.");
+            $this->error("{$this->basePath} has no vendor/saucebase/core. "
+                .'Run this from the root of a Saucebase contributor checkout, or name it with --path.');
 
             return self::FAILURE;
         }
@@ -84,7 +85,8 @@ class StackCommand extends Command
         }
 
         if (! $this->option('dev')) {
-            $this->error('An application gets its framework from `php artisan saucebase:install`. In a contributor checkout, run `saucebase stack '.$framework.' --dev`.');
+            $this->error('An application gets its framework from `php artisan saucebase:install`. '
+                ."In a contributor checkout, run `saucebase stack {$framework} --dev`.");
 
             return self::FAILURE;
         }
@@ -142,7 +144,8 @@ class StackCommand extends Command
         }
 
         if ($this->cssEdited() && ! $this->option('force')) {
-            $this->error('resources/css has changes that are not in saucebase/core. Run `saucebase stack --sync` to keep them, or `saucebase stack --reset --force` to discard them.');
+            $this->error('resources/css has changes that are not in saucebase/core. Run `saucebase stack --sync` '
+                .'to keep them, or `saucebase stack --reset --force` to discard them.');
 
             return self::FAILURE;
         }
@@ -185,7 +188,8 @@ class StackCommand extends Command
     private function runSync(): int
     {
         if (($this->projectJson()['contributor'] ?? false) !== true) {
-            $this->error('Syncing CSS back to saucebase/core only works in a contributor checkout (`saucebase stack <framework> --dev`).');
+            $this->error('Syncing CSS back to saucebase/core only works in a contributor checkout '
+                .'(`saucebase stack <framework> --dev`).');
 
             return self::FAILURE;
         }
@@ -392,7 +396,10 @@ class StackCommand extends Command
     {
         $this->files->put(
             $this->basePath.'/saucebase.json',
-            json_encode([...$this->projectJson(), 'framework' => $framework, 'contributor' => true], JSON_PRETTY_PRINT).PHP_EOL
+            json_encode(
+                [...$this->projectJson(), 'framework' => $framework, 'contributor' => true],
+                JSON_PRETTY_PRINT,
+            ).PHP_EOL
         );
     }
 
