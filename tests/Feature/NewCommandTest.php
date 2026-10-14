@@ -2,6 +2,8 @@
 
 namespace Saucebase\Installer\Tests\Feature;
 
+use Laravel\Prompts\Key;
+use Laravel\Prompts\Prompt;
 use Saucebase\Installer\Console\Commands\NewCommand;
 use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\HerdEnvironment;
@@ -59,6 +61,24 @@ class NewCommandTest extends TestCase
         $this->assertNull($this->command([])->exposedSsl(new NativeEnvironment));
     }
 
+    public function test_the_folder_defaults_to_the_app_name_as_a_slug(): void
+    {
+        // The app's name, then Enter to take the folder it suggests.
+        Prompt::fake([...str_split('Acme Shop'), Key::ENTER, Key::ENTER]);
+
+        $this->assertSame(['acme-shop', 'Acme Shop'], $this->command([])->exposedNames(null));
+    }
+
+    public function test_herd_is_offered_at_the_apps_own_address(): void
+    {
+        $this->assertSame('Laravel Herd - served at https://acme-shop.test', $this->command([])->exposedDriverOptions('acme-shop')['herd']);
+    }
+
+    public function test_herd_serves_the_app_at_its_folder_name_without_asking(): void
+    {
+        $this->assertSame('acme-shop.test', $this->command([])->exposedResolveDomain('acme-shop', new HerdEnvironment));
+    }
+
     public function test_a_template_leaves_the_framework_and_modules_to_the_install(): void
     {
         $command = $this->command(['using' => 'vendor/template']);
@@ -102,6 +122,23 @@ class TestableNewCommand extends NewCommand
     }
 
     public ?string $appName = null;
+
+    /** @return array{0: string, 1: string|null} */
+    public function exposedNames(?string $name): array
+    {
+        return $this->names($name);
+    }
+
+    /** @return array<string, string> */
+    public function exposedDriverOptions(string $name): array
+    {
+        return $this->driverOptions($name, herd: true);
+    }
+
+    public function exposedResolveDomain(string $name, Environment $driver): string
+    {
+        return $this->resolveDomain($name, $driver);
+    }
 
     public function exposedSsl(Environment $driver): ?bool
     {

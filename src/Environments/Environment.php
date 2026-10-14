@@ -86,7 +86,10 @@ abstract class Environment
             return [];
         }
 
-        return ['cd `'.$target.'`'];
+        // Relative under the current directory, and quoted only where the shell would split it.
+        $path = str_starts_with($target, $cwd.'/') ? substr($target, strlen($cwd) + 1) : $target;
+
+        return ['cd '.(preg_match('#^[\w./-]+$#', $path) === 1 ? $path : escapeshellarg($path))];
     }
 
     private function normalizePath(string $path): string

@@ -40,6 +40,17 @@ class PublishDockerCommandTest extends TestCase
         $this->assertStringContainsString("docker-php-ext-install \\\n    gd \\\n", $dockerfile);
     }
 
+    public function test_mysql_has_time_to_create_its_first_database(): void
+    {
+        $this->artisan("docker:publish --path={$this->tmp}")->assertSuccessful();
+
+        // A fresh MySQL takes longer to start than its health check allows, so the
+        // app containers would refuse to start behind it.
+        $compose = (string) file_get_contents($this->tmp.'/docker-compose.yml');
+        $mysql = substr($compose, (int) strpos($compose, "\n    mysql:\n"), 1200);
+        $this->assertStringContainsString('start_period: 60s', $mysql);
+    }
+
     public function test_a_script_the_application_serves_itself_reaches_it(): void
     {
         // Livewire serves its script from a route. Answering every missing .js with a 404

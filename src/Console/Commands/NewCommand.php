@@ -44,18 +44,9 @@ class NewCommand extends Command
             return $blocked;
         }
 
-        $name = $this->argument('name') ?? text(
-            label: 'What is the name of your project?',
-            placeholder: 'E.g. my-app',
-            required: 'The project name is required.',
-        );
+        [$name, $appName] = $this->names($this->argument('name'));
 
-        // The directory name is the default: a brand often differs from the folder it lives in.
-        $appName = $this->option('app-name') ?: ($this->input->isInteractive()
-            ? text(label: 'What should the app be called?', default: Str::headline($name), required: true)
-            : null);
-
-        $driver = $this->resolveDriver();
+        $driver = $this->resolveDriver($name);
 
         $missing = $driver->missingPrerequisites();
         if (! empty($missing)) {
@@ -76,7 +67,7 @@ class NewCommand extends Command
             return self::FAILURE;
         }
 
-        $domain = $this->resolveDomain($name);
+        $domain = $this->resolveDomain($name, $driver);
 
         // A template brings its own framework, which the install reads once the files are there.
         $stack = $this->option('stack') ?: ($this->option('using') ? null : select(
@@ -107,22 +98,53 @@ class NewCommand extends Command
         return $result;
     }
 
-    protected function resolveDriver(): Environment
+    /**
+     * The app's name and the folder it goes in. Asked name first: the folder is its slug.
+     *
+     * @return array{0: string, 1: string|null}
+     */
+    protected function names(?string $folder): array
     {
-        $name = $this->option('driver') ?? select(
+        if ($folder !== null) {
+            // The directory name is the default: a brand often differs from the folder it lives in.
+            $appName = $this->option('app-name') ?: ($this->input->isInteractive()
+                ? text(label: 'What should the app be called?', default: Str::headline($folder), required: true)
+                : null);
+
+            return [$folder, $appName];
+        }
+
+        $appName = $this->option('app-name') ?: text(
+            label: 'What should the app be called?',
+            placeholder: 'E.g. Acme Shop',
+            required: 'The app name is required.',
+        );
+
+        $folder = text(label: 'Which folder should it go in?', default: Str::slug($appName), required: true);
+
+        return [$folder, $appName];
+    }
+
+    protected function resolveDriver(string $name): Environment
+    {
+        $driver = $this->option('driver') ?? select(
             label: 'How would you like to run Saucebase?',
-            options: [
-                'docker' => 'Docker - recommended for real projects: MySQL, Redis, Mailpit, HTTPS',
-                'native' => 'Native PHP - minimal setup, ideal for exploring',
-                // Offered only where it can run.
-                ...((new HerdEnvironment)->hasCommand('herd')
-                    ? ['herd' => 'Laravel Herd - served at https://<name>.test']
-                    : []),
-            ],
+            // Offered only where it can run.
+            options: $this->driverOptions($name, herd: (new HerdEnvironment)->hasCommand('herd')),
             default: $this->savedDriverPreference() ?? 'docker',
         );
 
-        return Environment::make($name);
+        return Environment::make($driver);
+    }
+
+    /** @return array<string, string> */
+    protected function driverOptions(string $name, bool $herd): array
+    {
+        return [
+            'docker' => 'Docker - recommended for real projects: MySQL, Redis, Mailpit, HTTPS',
+            'native' => 'Native PHP - minimal setup, ideal for exploring',
+            ...($herd ? ['herd' => 'Laravel Herd - served at https://'.Str::slug($name).'.test'] : []),
+        ];
     }
 
     /** Docker asks; Herd secures unless told not to; native serves plain HTTP. */
@@ -154,12 +176,14 @@ class NewCommand extends Command
      * The hostname the app will be served on. Collected upfront (like ssl and stack)
      * because the SSL certificate and nginx config are both built from it.
      */
-    protected function resolveDomain(string $name): string
+    protected function resolveDomain(string $name, Environment $driver): string
     {
         $option = $this->option('domain');
 
         $answer = match (true) {
-            $option !== null && $option !== '' => $option,
+            is_string($option) && $option !== '' => $option,
+            // Herd serves every site at its own .test name.
+            $driver->name() === 'herd' => Str::slug($name).'.test',
             (bool) $this->option('force') => 'localhost',
             default => text(
                 label: 'Which hostname will you use for this app?',
