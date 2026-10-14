@@ -4,9 +4,11 @@ namespace Saucebase\Installer\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Application;
 use Saucebase\Installer\Console\Commands\Concerns\DisplaysBanner;
 use Saucebase\Installer\Environments\Environment;
+use Saucebase\Installer\Environments\HerdEnvironment;
 use Saucebase\Installer\ModuleRegistry;
 use Symfony\Component\Console\Input\ArrayInput;
 
@@ -18,23 +20,16 @@ class NewCommand extends Command
 {
     use DisplaysBanner;
 
-    /**
-     * Constraint used only when Packagist can't be reached to resolve the newest
-     * skeleton release. Must stay numeric — `@stable` does not override the
-     * `--stability=dev` that laravel/installer forces, so anything non-numeric
-     * silently installs dev-main. Bump this when the skeleton changes major.
-     */
-    private const SKELETON_FALLBACK = '^2.0';
-
     protected $signature = 'new
                             {name? : The name of the new Saucebase application}
-                            {--driver= : Environment driver (docker, native) — prompted if omitted}
+                            {--driver= : Environment driver (docker, native, herd) — prompted if omitted}
                             {--stack= : Frontend stack (vue or react) — prompted if omitted}
                             {--modules= : Comma-separated list of modules to enable, or "none"}
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--ssl= : Enable HTTPS with mkcert for docker (yes/no) — prompted if omitted}
                             {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
-                            {--using= : The skeleton package to install (defaults to saucebase/saucebase)}
+                            {--app-name= : What the app is called (defaults to its directory name), prompted if omitted}
+                            {--using= : A Saucebase template to start from, instead of a plain Laravel application}
                             {--dev : Dev environment}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
                             {--force : Overwrite an existing directory and skip confirmations}';
@@ -55,6 +50,11 @@ class NewCommand extends Command
             required: 'The project name is required.',
         );
 
+        // The directory name is the default: a brand often differs from the folder it lives in.
+        $appName = $this->option('app-name') ?: ($this->input->isInteractive()
+            ? text(label: 'What should the app be called?', default: Str::headline($name), required: true)
+            : null);
+
         $driver = $this->resolveDriver();
 
         $missing = $driver->missingPrerequisites();
@@ -67,7 +67,7 @@ class NewCommand extends Command
             return self::FAILURE;
         }
 
-        $ssl = $driver->name() === 'docker' ? $this->resolveSsl($driver) : null;
+        $ssl = $this->ssl($driver);
 
         if ($ssl === true && ! $driver->hasCommand('mkcert')) {
             $this->error('mkcert is required for SSL. Install it with: brew install mkcert');
@@ -78,11 +78,12 @@ class NewCommand extends Command
 
         $domain = $this->resolveDomain($name);
 
-        $stack = $this->option('stack') ?: select(
+        // A template brings its own framework, which the install reads once the files are there.
+        $stack = $this->option('stack') ?: ($this->option('using') ? null : select(
             label: 'Which frontend stack would you like to use?',
             options: ['vue' => 'Vue', 'react' => 'React'],
             default: 'vue',
-        );
+        ));
 
         $modules = $this->resolveModulesUpfront($stack);
 
@@ -94,7 +95,8 @@ class NewCommand extends Command
 
         $this->line('  Setup continues below - see the final summary for the real next steps.');
 
-        $result = $this->call('install', $this->installArguments($name, $driver, $stack, $ssl, $modules, $domain));
+        $arguments = $this->installArguments($name, $driver, $stack, $ssl, $modules, $domain, $appName);
+        $result = $this->call('install', $arguments);
 
         if ($result === self::SUCCESS) {
             $this->saveDriverPreference($driver->name());
@@ -112,11 +114,25 @@ class NewCommand extends Command
             options: [
                 'docker' => 'Docker - recommended for real projects: MySQL, Redis, Mailpit, HTTPS',
                 'native' => 'Native PHP - minimal setup, ideal for exploring',
+                // Offered only where it can run.
+                ...((new HerdEnvironment)->hasCommand('herd')
+                    ? ['herd' => 'Laravel Herd - served at https://<name>.test']
+                    : []),
             ],
             default: $this->savedDriverPreference() ?? 'docker',
         );
 
         return Environment::make($name);
+    }
+
+    /** Docker asks; Herd secures unless told not to; native serves plain HTTP. */
+    protected function ssl(Environment $driver): ?bool
+    {
+        return match ($driver->name()) {
+            'docker' => $this->resolveSsl($driver),
+            'herd' => $this->option('ssl') !== 'no',
+            default => null,
+        };
     }
 
     protected function resolveSsl(Environment $driver): bool
@@ -164,9 +180,10 @@ class NewCommand extends Command
      *
      * @return string[]|null
      */
-    protected function resolveModulesUpfront(string $stack): ?array
+    protected function resolveModulesUpfront(?string $stack): ?array
     {
-        if ($this->option('all-modules') || $this->option('modules') !== null || $this->option('dev')) {
+        if ($stack === null || $this->option('all-modules') || $this->option('dev')
+            || $this->option('modules') !== null) {
             return null;
         }
 
@@ -186,9 +203,23 @@ class NewCommand extends Command
         $laravel = new LaravelNewCommand;
         $laravel->setApplication($this->getApplication());
 
+        // All prompts were collected upfront; creating the project runs unattended.
+        $input = new ArrayInput($this->projectArguments($name));
+        $input->setInteractive(false);
+
+        return $laravel->run($input, $this->output);
+    }
+
+    /**
+     * What laravel/installer is asked for: a plain Laravel application, unless a
+     * template was named. A contributor (--dev) starts from the Saucebase skeleton.
+     *
+     * @return array<string, mixed>
+     */
+    protected function projectArguments(string $name): array
+    {
         $arguments = [
             'name' => $name,
-            '--using' => $this->skeletonPackage(),
             '--phpunit' => true,
             '--no-node' => true,
             '--no-boost' => true,
@@ -197,56 +228,31 @@ class NewCommand extends Command
             '--git' => true,
         ];
 
+        if ($using = $this->option('using') ?: ($this->option('dev') ? 'saucebase/saucebase' : null)) {
+            $arguments['--using'] = $using;
+        }
+
         if ($this->option('force')) {
             $arguments['--force'] = true;
         }
 
-        // All prompts were collected upfront; the skeleton install runs unattended.
-        $input = new ArrayInput($arguments);
-        $input->setInteractive(false);
-
-        return $laravel->run($input, $this->output);
-    }
-
-    /**
-     * The skeleton package (with version constraint) to hand to laravel/installer.
-     *
-     * laravel/installer always appends `--stability=dev` to its create-project
-     * call, which would otherwise pull the skeleton's default (dev) branch. We
-     * pin to the latest stable of the installer's own major version — the
-     * installer and skeleton share a major by design — so real installs get a
-     * stable release. Contributors (--dev) and source checkouts get the dev branch.
-     */
-    protected function skeletonPackage(): string
-    {
-        if ($using = $this->option('using')) {
-            return $using;
-        }
-
-        $package = 'saucebase/saucebase';
-
-        if ($this->option('dev')) {
-            return $package;
-        }
-
-        // laravel/installer hardcodes --stability=dev when it shells out to
-        // `composer create-project`, so a bare package name resolves to dev-main.
-        // Verified: `@stable` does NOT override that flag — only a numeric
-        // constraint excludes the dev branch. So resolve the newest published
-        // release and pin it, rather than coupling to the installer's own major.
-        $latest = $this->latestVersion($package);
-
-        return "{$package}:".($latest ?? self::SKELETON_FALLBACK);
+        return $arguments;
     }
 
     /**
      * @param  string[]|null  $modules
      * @return array<string, mixed>
      */
-    protected function installArguments(string $name, Environment $driver, string $stack, ?bool $ssl, ?array $modules, string $domain = 'localhost'): array
-    {
-        $arguments = [
-            'stack' => $stack,
+    protected function installArguments(
+        string $name,
+        Environment $driver,
+        ?string $stack,
+        ?bool $ssl,
+        ?array $modules,
+        string $domain = 'localhost',
+        ?string $appName = null,
+    ): array {
+        $arguments = array_filter(['stack' => $stack]) + [
             '--path' => getcwd().'/'.$name,
             '--driver' => $driver->name(),
             '--domain' => $domain,
@@ -255,6 +261,10 @@ class NewCommand extends Command
 
         if ($ssl !== null) {
             $arguments['--ssl'] = $ssl ? 'yes' : 'no';
+        }
+
+        if ($appName !== null) {
+            $arguments['--app-name'] = $appName;
         }
 
         if ($modules !== null) {
@@ -320,13 +330,15 @@ class NewCommand extends Command
     }
 
     /**
-     * The newest published release of a package, or null when offline.
+     * The newest published release of the installer, or null when offline.
      *
      * Packagist's p2 endpoint lists tagged releases only (dev branches live in a
      * separate ~dev.json), so index 0 is always the latest stable.
      */
-    protected function latestVersion(string $package = 'saucebase/installer'): ?string
+    protected function latestVersion(): ?string
     {
+        $package = 'saucebase/installer';
+
         try {
             $response = Http::timeout(2)->get("https://repo.packagist.org/p2/{$package}.json");
 

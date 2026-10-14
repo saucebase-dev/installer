@@ -9,11 +9,12 @@ abstract class Environment
     /** Label of the step that failed, for the failure callout. Set via fail(). */
     protected ?string $failedStep = null;
 
-    public static function make(string $name): self
+    public static function make(string $name): Environment
     {
         return match ($name) {
             'docker' => new DockerEnvironment,
             'native' => new NativeEnvironment,
+            'herd' => new HerdEnvironment,
             default => throw new \InvalidArgumentException("Unknown driver: {$name}"),
         };
     }
@@ -122,7 +123,11 @@ abstract class Environment
             return array_values(array_filter(array_map(function (string $name): string {
                 $name = strtolower(trim($name));
 
-                return $name !== '' ? (str_contains($name, '/') ? $name : "saucebase/{$name}") : '';
+                if ($name === '' || str_contains($name, '/')) {
+                    return $name;
+                }
+
+                return "saucebase/{$name}";
             }, explode(',', $raw))));
         }
 

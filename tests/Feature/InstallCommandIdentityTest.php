@@ -29,6 +29,14 @@ class InstallCommandIdentityTest extends TestCase
         $this->assertStringContainsString('APP_SLUG=my-app', $result);
     }
 
+    public function test_names_a_plain_laravel_app_after_its_directory(): void
+    {
+        $result = $this->apply("APP_NAME=Laravel\n");
+
+        $this->assertStringContainsString('APP_NAME="My App"', $result);
+        $this->assertStringContainsString('APP_SLUG=my-app', $result);
+    }
+
     public function test_leaves_a_single_word_name_unquoted(): void
     {
         $result = $this->apply("APP_NAME=Saucebase\n", dir: 'blog');
@@ -71,6 +79,13 @@ class InstallCommandIdentityTest extends TestCase
 
         $this->assertStringContainsString('APP_SLUG=my-app', $result);
         $this->assertStringContainsString('APP_HOST=my-app.test', $result);
+    }
+
+    /** Whatever is appended to the file next must not land on the same line. */
+    public function test_an_appended_key_ends_its_line(): void
+    {
+        $this->assertSame("APP_NAME=Acme\nAPP_HOST=localhost\n", InstallCommand::setEnvLine("APP_NAME=Acme\n", 'APP_HOST', 'localhost'));
+        $this->assertSame("APP_NAME=Acme\nAPP_HOST=localhost\n", InstallCommand::setEnvLine('APP_NAME=Acme', 'APP_HOST', 'localhost'));
     }
 
     public function test_records_the_chosen_host(): void
