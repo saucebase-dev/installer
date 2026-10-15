@@ -319,7 +319,7 @@ class DockerEnvironmentTest extends TestCase
             {
                 public function __construct(private object $spy) {}
 
-                protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
+                protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
                 {
                     $this->spy->execCalled = true;
 
@@ -355,7 +355,7 @@ class DockerEnvironmentTest extends TestCase
             {
                 public function __construct(private object $spy) {}
 
-                protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
+                protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
                 {
                     $this->spy->execCalled = true;
 
@@ -480,7 +480,7 @@ class DockerEnvironmentTest extends TestCase
                 return true;
             }
 
-            protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
+            protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
             {
                 $this->ran[] = implode(' ', $args);
 

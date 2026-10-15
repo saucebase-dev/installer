@@ -47,7 +47,7 @@ abstract class Environment
         $result = $this->boot($command);
 
         if ($result === InstallCommand::SUCCESS) {
-            $command->displaySuccess(array_merge($this->cdStep($command), $this->nextSteps($command)));
+            $command->displaySuccess(array_merge($this->cdStep($command), $this->nextSteps($command), $this->demoStep($command)));
         } else {
             // Single exit point for every failing step in boot() — the install must
             // never end silently, since the app directory already exists by now.
@@ -97,6 +97,16 @@ abstract class Environment
         $real = realpath($path);
 
         return rtrim($real !== false ? $real : $path, '/');
+    }
+
+    /** @return string[] The demo password, once, when demo content was loaded. */
+    protected function demoStep(InstallCommand $command): array
+    {
+        $password = $command->optionOrNull('demo') ? $this->readEnvValue($command, 'DEMO_PASSWORD') : null;
+
+        return $password === null ? [] : [
+            "Sign in to any demo account with the password `{$password}`. It is DEMO_PASSWORD in .env, used when demo data is seeded",
+        ];
     }
 
     /** Hook: perform driver-specific steps before the module prompt. Return an exit code to abort, null to continue. */

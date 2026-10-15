@@ -76,7 +76,7 @@ class InstallCommandPatchesTest extends TestCase
     {
         $command = new class extends TestableInstallCommand
         {
-            protected function doInstallModules(array $selected): bool
+            public function doInstallModules(array $selected, ?\Closure $run = null): bool
             {
                 return false;
             }

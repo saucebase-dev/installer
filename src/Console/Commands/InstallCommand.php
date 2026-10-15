@@ -27,6 +27,7 @@ class InstallCommand extends Command
                             {--ssl= : Enable HTTPS with mkcert for docker (yes/no) — prompted if omitted}
                             {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
                             {--app-name= : What the app is called (defaults to its directory name)}
+                            {--demo : Load demo content and demo users}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--modules= : Comma-separated list of modules to enable (e.g. Auth,Settings), or "none"}
@@ -587,6 +588,20 @@ class InstallCommand extends Command
             : rtrim($env, "\n")."\n{$key}={$value}\n";
     }
 
+    /** The password every demo account gets: the one in .env, or a new random one saved there. */
+    public function demoPassword(): string
+    {
+        $env = (string) @file_get_contents($this->path('.env'));
+        $password = self::readEnvLine($env, 'DEMO_PASSWORD');
+
+        if ($password === null || $password === '') {
+            $password = Str::password(10, symbols: false);
+            file_put_contents($this->path('.env'), self::setEnvLine($env, 'DEMO_PASSWORD', $password));
+        }
+
+        return $password;
+    }
+
     public function envHasAppKey(): bool
     {
         $env = @file_get_contents($this->path('.env'));
@@ -657,14 +672,26 @@ class InstallCommand extends Command
         return $this->doInstallModules($selected);
     }
 
-    protected function doInstallModules(array $selected): bool
+    /**
+     * Require, patch, migrate and seed the modules. Every driver runs these same steps;
+     * `$run` decides where a command runs (Docker passes one that runs it in the app
+     * container), defaulting to this machine.
+     *
+     * @param  string[]  $selected
+     * @param  (\Closure(string[] $command, int $timeout): bool)|null  $run
+     */
+    public function doInstallModules(array $selected, ?\Closure $run = null): bool
     {
+        $run ??= fn (array $command, int $timeout): bool => $command[0] === 'php'
+            ? $this->runArtisan(array_slice($command, 2), $timeout)
+            : $this->runProcess($command, $timeout);
+
         $this->newLine();
 
         // Phase 1: require all selected packages in one Composer run
         $ok = false;
-        $this->components->task('Installing modules', function () use ($selected, &$ok) {
-            return $ok = $this->runProcess(['composer', 'require', '--no-interaction', ...$selected]);
+        $this->components->task('Installing modules', function () use ($selected, $run, &$ok) {
+            return $ok = $run(['composer', 'require', '--no-interaction', ...$selected], 300);
         });
 
         if (! $this->composerRequireSucceeded($ok, $selected)) {
@@ -679,9 +706,9 @@ class InstallCommand extends Command
         }
 
         // Phase 3: sync module configs, then migrate + seed each module individually
-        $this->components->task('Syncing modules', fn () => $this->runArtisan(['modules:sync'], 30));
+        $this->components->task('Syncing modules', fn () => $run(['php', 'artisan', 'modules:sync'], 30));
 
-        $this->components->task('Running module migrations', fn () => $this->runArtisan(['migrate', '--force'], 300));
+        $this->components->task('Running module migrations', fn () => $run(['php', 'artisan', 'migrate', '--force'], 300));
 
         foreach ($selected as $package) {
             $name = Str::after($package, '/');
@@ -690,9 +717,21 @@ class InstallCommand extends Command
                 continue;
             }
 
-            $this->components->task("Seeding {$name}", function () use ($name) {
-                return $this->runArtisan(['db:seed', "--module={$name}", '--force'], 60);
+            $this->components->task("Seeding {$name}", fn () => $run(['php', 'artisan', 'db:seed', "--module={$name}", '--force'], 60));
+        }
+
+        if ($this->option('demo')) {
+            $this->demoPassword();
+            $seeded = false;
+            $this->components->task('Loading demo content', function () use ($run, &$seeded) {
+                return $seeded = $run(['php', 'artisan', 'modules:seed', '--demo'], 300);
             });
+
+            if (! $seeded) {
+                $this->components->warn('Loading demo content failed.');
+
+                return false;
+            }
         }
 
         return true;
@@ -931,7 +970,7 @@ class InstallCommand extends Command
             $command .= ' --modules='.$modules;
         }
 
-        foreach (['all-modules', 'dev', 'fresh', 'force'] as $flag) {
+        foreach (['all-modules', 'dev', 'fresh', 'force', 'demo'] as $flag) {
             if ($this->optionOrNull($flag)) {
                 $command .= ' --'.$flag;
             }

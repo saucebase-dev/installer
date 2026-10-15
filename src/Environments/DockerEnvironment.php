@@ -2,7 +2,6 @@
 
 namespace Saucebase\Installer\Environments;
 
-use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Symfony\Component\Process\Process;
 
@@ -662,13 +661,24 @@ class DockerEnvironment extends Environment
         return $process->isSuccessful();
     }
 
-    protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
+    /** `$quiet` holds the output back unless the command fails, so a task line stays clean. */
+    protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
     {
-        $process = new Process(array_merge(['docker', 'compose', 'exec', '-T', 'app'], $args), $command->targetPath());
+        $process = $this->containerProcess($command, $args);
         $process->setTimeout($timeout);
-        $process->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
+        $process->run($quiet ? null : fn ($_type, $buffer) => $command->line(trim($buffer)));
+
+        if ($quiet && ! $process->isSuccessful()) {
+            $command->line(trim($process->getOutput().$process->getErrorOutput()));
+        }
 
         return $process->isSuccessful();
+    }
+
+    /** @param  string[]  $args */
+    protected function containerProcess(InstallCommand $command, array $args): Process
+    {
+        return new Process(array_merge(['docker', 'compose', 'exec', '-T', 'app'], $args), $command->targetPath());
     }
 
     protected function generateAppKey(InstallCommand $command): bool
@@ -766,42 +776,10 @@ class DockerEnvironment extends Environment
     {
         $modules = $this->resolveModules($command);
 
-        if (empty($modules)) {
-            return true;
-        }
-
-        $command->info('Installing modules...');
-
-        $ok = $this->execInContainer(
-            $command,
-            ['composer', 'require', ...$modules, '--no-interaction'],
-            timeout: 300,
+        return $modules === [] || $command->doInstallModules(
+            $modules,
+            fn (array $args, int $timeout): bool => $this->execInContainer($command, $args, $timeout, quiet: true),
         );
-
-        if (! $command->composerRequireSucceeded($ok, $modules)) {
-            $command->warn('Failed to install one or more modules — skipping patches, sync, and migrations.');
-
-            return false;
-        }
-
-        if (! $command->applyModulePatches($modules)) {
-            return false;
-        }
-
-        $this->execInContainer($command, ['php', 'artisan', 'modules:sync']);
-        $this->execInContainer($command, ['php', 'artisan', 'migrate', '--force'], timeout: 300);
-
-        foreach ($modules as $package) {
-            $name = Str::after($package, '/');
-
-            if (! $command->moduleHasSeeder($name)) {
-                continue;
-            }
-
-            $this->execInContainer($command, ['php', 'artisan', 'db:seed', "--module={$name}", '--force']);
-        }
-
-        return true;
     }
 
     protected function nextSteps(InstallCommand $command): array
