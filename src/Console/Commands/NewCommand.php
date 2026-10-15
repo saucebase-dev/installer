@@ -231,7 +231,11 @@ class NewCommand extends Command
             return true;
         }
 
-        return $modules !== [] && confirm(
+        if ($modules === [] || $this->option('modules') === 'none') {
+            return false;
+        }
+
+        return confirm(
             label: 'Load demo content?',
             default: false,
             hint: 'Sample content and users to try Saucebase out',

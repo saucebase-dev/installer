@@ -722,7 +722,16 @@ class InstallCommand extends Command
 
         if ($this->option('demo')) {
             $this->demoPassword();
-            $this->components->task('Loading demo content', fn () => $run(['php', 'artisan', 'modules:seed', '--demo'], 300));
+            $seeded = false;
+            $this->components->task('Loading demo content', function () use ($run, &$seeded) {
+                return $seeded = $run(['php', 'artisan', 'modules:seed', '--demo'], 300);
+            });
+
+            if (! $seeded) {
+                $this->components->warn('Loading demo content failed.');
+
+                return false;
+            }
         }
 
         return true;
@@ -961,7 +970,7 @@ class InstallCommand extends Command
             $command .= ' --modules='.$modules;
         }
 
-        foreach (['all-modules', 'dev', 'fresh', 'force'] as $flag) {
+        foreach (['all-modules', 'dev', 'fresh', 'force', 'demo'] as $flag) {
             if ($this->optionOrNull($flag)) {
                 $command .= ' --'.$flag;
             }

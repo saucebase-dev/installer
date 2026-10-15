@@ -24,7 +24,7 @@ class InstallModulesRunnerTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_every_step_runs_through_the_given_runner(): void
+    private function command(): TestableInstallCommand
     {
         $command = new class extends TestableInstallCommand
         {
@@ -51,6 +51,13 @@ class InstallModulesRunnerTest extends TestCase
         };
         $command->fakeOptions = ['path' => $this->tmp, 'demo' => true];
 
+        return $command;
+    }
+
+    public function test_every_step_runs_through_the_given_runner(): void
+    {
+        $command = $this->command();
+
         $ran = [];
         $ok = $command->installWith(['saucebase/blog'], function (array $args) use (&$ran): bool {
             $ran[] = implode(' ', $args);
@@ -65,5 +72,12 @@ class InstallModulesRunnerTest extends TestCase
             'php artisan migrate --force',
             'php artisan modules:seed --demo',
         ], $ran);
+    }
+
+    public function test_a_failed_demo_seed_fails_the_module_install(): void
+    {
+        $ok = $this->command()->installWith(['saucebase/blog'], fn (array $args): bool => ! in_array('--demo', $args, true));
+
+        $this->assertFalse($ok);
     }
 }

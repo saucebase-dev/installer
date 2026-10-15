@@ -98,6 +98,11 @@ class NewCommandTest extends TestCase
         $this->assertFalse($this->command([])->exposedWantsDemo([]));
     }
 
+    public function test_demo_content_is_not_offered_when_no_modules_are_asked_for(): void
+    {
+        $this->assertFalse($this->command(['modules' => 'none'])->exposedWantsDemo(null));
+    }
+
     public function test_demo_reaches_the_install(): void
     {
         $command = $this->command(['force' => true]);
