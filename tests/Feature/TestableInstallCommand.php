@@ -77,7 +77,7 @@ class TestableInstallCommand extends InstallCommand
         return $this->setupModules();
     }
 
-    protected function doInstallModules(array $selected): bool
+    public function doInstallModules(array $selected, ?\Closure $run = null): bool
     {
         // no-op — prevents composer require from running in unit tests
         return true;
