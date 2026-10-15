@@ -801,6 +801,10 @@ class DockerEnvironment extends Environment
             $this->execInContainer($command, ['php', 'artisan', 'db:seed', "--module={$name}", '--force']);
         }
 
+        if ($command->option('demo')) {
+            $this->execInContainer($command, ['php', 'artisan', 'modules:seed', '--demo'], timeout: 300);
+        }
+
         return true;
     }
 

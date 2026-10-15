@@ -27,6 +27,7 @@ class InstallCommand extends Command
                             {--ssl= : Enable HTTPS with mkcert for docker (yes/no) — prompted if omitted}
                             {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
                             {--app-name= : What the app is called (defaults to its directory name)}
+                            {--demo : Load demo content and demo users}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--modules= : Comma-separated list of modules to enable (e.g. Auth,Settings), or "none"}
@@ -693,6 +694,10 @@ class InstallCommand extends Command
             $this->components->task("Seeding {$name}", function () use ($name) {
                 return $this->runArtisan(['db:seed', "--module={$name}", '--force'], 60);
             });
+        }
+
+        if ($this->option('demo')) {
+            $this->components->task('Loading demo content', fn () => $this->runArtisan(['modules:seed', '--demo'], 300));
         }
 
         return true;

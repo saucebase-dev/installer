@@ -31,6 +31,7 @@ class NewCommand extends Command
                             {--app-name= : What the app is called (defaults to its directory name), prompted if omitted}
                             {--using= : A Saucebase template to start from, instead of a plain Laravel application}
                             {--dev : Dev environment}
+                            {--demo : Load demo content and demo users}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
                             {--force : Overwrite an existing directory and skip confirmations}';
 
@@ -77,6 +78,7 @@ class NewCommand extends Command
         ));
 
         $modules = $this->resolveModulesUpfront($stack);
+        $demo = $this->wantsDemo($modules);
 
         if ($this->createProject($name) !== 0) {
             $this->error('Project creation failed.');
@@ -86,7 +88,7 @@ class NewCommand extends Command
 
         $this->line('  Setup continues below - see the final summary for the real next steps.');
 
-        $arguments = $this->installArguments($name, $driver, $stack, $ssl, $modules, $domain, $appName);
+        $arguments = $this->installArguments($name, $driver, $stack, $ssl, $modules, $domain, $appName, $demo);
         $result = $this->call('install', $arguments);
 
         if ($result === self::SUCCESS) {
@@ -217,6 +219,25 @@ class NewCommand extends Command
         return empty($available) ? [] : $registry->promptSelection($available);
     }
 
+    /**
+     * Demo content comes from the modules, so there is nothing to offer without them.
+     * Declined by default: a real app would have to delete it, demo users included.
+     *
+     * @param  string[]|null  $modules  Null when the install decides which modules come
+     */
+    protected function wantsDemo(?array $modules): bool
+    {
+        if ($this->option('demo')) {
+            return true;
+        }
+
+        return $modules !== [] && confirm(
+            label: 'Load demo content?',
+            default: false,
+            hint: 'Sample content and users to try Saucebase out',
+        );
+    }
+
     protected function registry(): ModuleRegistry
     {
         return new ModuleRegistry;
@@ -275,6 +296,7 @@ class NewCommand extends Command
         ?array $modules,
         string $domain = 'localhost',
         ?string $appName = null,
+        bool $demo = false,
     ): array {
         $arguments = array_filter(['stack' => $stack]) + [
             '--path' => getcwd().'/'.$name,
@@ -295,6 +317,10 @@ class NewCommand extends Command
             $arguments['--modules'] = empty($modules) ? 'none' : implode(',', $modules);
         } elseif ($this->option('modules') !== null) {
             $arguments['--modules'] = $this->option('modules');
+        }
+
+        if ($demo) {
+            $arguments['--demo'] = true;
         }
 
         foreach (['all-modules', 'dev', 'fresh', 'force'] as $flag) {

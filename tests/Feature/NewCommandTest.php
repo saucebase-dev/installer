@@ -79,6 +79,36 @@ class NewCommandTest extends TestCase
         $this->assertSame('acme-shop.test', $this->command([])->exposedResolveDomain('acme-shop', new HerdEnvironment));
     }
 
+    public function test_demo_content_is_offered_and_declined_by_default(): void
+    {
+        Prompt::fake([Key::ENTER]);
+
+        $this->assertFalse($this->command([])->exposedWantsDemo(['saucebase/blog']));
+    }
+
+    public function test_demo_content_is_loaded_when_accepted(): void
+    {
+        Prompt::fake(['y', Key::ENTER]);
+
+        $this->assertTrue($this->command([])->exposedWantsDemo(['saucebase/blog']));
+    }
+
+    public function test_demo_content_is_not_offered_without_modules(): void
+    {
+        $this->assertFalse($this->command([])->exposedWantsDemo([]));
+    }
+
+    public function test_demo_reaches_the_install(): void
+    {
+        $command = $this->command(['force' => true]);
+
+        $this->assertArrayNotHasKey('--demo', $command->exposedInstallArguments('acme', 'vue'));
+
+        $command->demo = true;
+
+        $this->assertTrue($command->exposedInstallArguments('acme', 'vue')['--demo']);
+    }
+
     public function test_a_template_leaves_the_framework_and_modules_to_the_install(): void
     {
         $command = $this->command(['using' => 'vendor/template']);
@@ -118,10 +148,18 @@ class TestableNewCommand extends NewCommand
     /** @return array<string, mixed> */
     public function exposedInstallArguments(string $name, ?string $stack): array
     {
-        return $this->installArguments($name, new NativeEnvironment, $stack, null, null, appName: $this->appName);
+        return $this->installArguments($name, new NativeEnvironment, $stack, null, null, appName: $this->appName, demo: $this->demo);
     }
 
     public ?string $appName = null;
+
+    public bool $demo = false;
+
+    /** @param  string[]|null  $modules */
+    public function exposedWantsDemo(?array $modules): bool
+    {
+        return $this->wantsDemo($modules);
+    }
 
     /** @return array{0: string, 1: string|null} */
     public function exposedNames(?string $name): array
