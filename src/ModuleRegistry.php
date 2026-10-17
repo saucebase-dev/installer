@@ -90,6 +90,12 @@ class ModuleRegistry
         ));
     }
 
+    /** `saucebase/coming-soon` reads as "Coming Soon". */
+    public function label(string $package): string
+    {
+        return Str::headline(Str::after($package, '/'));
+    }
+
     /**
      * @param  string[]  $available
      * @return string[]
@@ -97,9 +103,7 @@ class ModuleRegistry
     public function promptSelection(array $available): array
     {
         $options = collect($available)
-            ->mapWithKeys(fn (string $package) => [
-                $package => Str::studly(Str::after($package, '/')),
-            ])
+            ->mapWithKeys(fn (string $package) => [$package => $this->label($package)])
             ->all();
 
         return multiselect(
