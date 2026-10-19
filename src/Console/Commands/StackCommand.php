@@ -116,7 +116,7 @@ class StackCommand extends Command
         $ext = $this->appExtension($framework);
         $source = '../../'.self::CORE_STACK."/{$framework}/js";
         $this->files->put($this->jsRoot."/app.{$ext}", "import '{$source}/app';\n");
-        $this->files->put($this->jsRoot."/ssr.{$ext}", "import '{$source}/ssr';\n");
+        $this->files->put($this->jsRoot."/ssr.{$ext}", "export { default } from '{$source}/ssr';\n");
 
         // module entry points must be written before skipGeneratedFiles so their paths are discovered
         $this->updateModuleEntryPoints($framework);

@@ -101,7 +101,7 @@ class StackCommandTest extends TestCase
         $this->artisan('stack vue --dev')->assertSuccessful();
 
         $this->assertStringContainsString("import '../../vendor/saucebase/core/stubs/stack/vue/js/app'", file_get_contents($this->tmpDir.'/resources/js/app.ts'));
-        $this->assertStringContainsString("import '../../vendor/saucebase/core/stubs/stack/vue/js/ssr'", file_get_contents($this->tmpDir.'/resources/js/ssr.ts'));
+        $this->assertStringContainsString("export { default } from '../../vendor/saucebase/core/stubs/stack/vue/js/ssr'", file_get_contents($this->tmpDir.'/resources/js/ssr.ts'));
     }
 
     public function test_dev_mode_react_writes_tsx_entry_points(): void
@@ -111,7 +111,7 @@ class StackCommandTest extends TestCase
         $this->artisan('stack react --dev')->assertSuccessful();
 
         $this->assertStringContainsString("import '../../vendor/saucebase/core/stubs/stack/react/js/app'", file_get_contents($this->tmpDir.'/resources/js/app.tsx'));
-        $this->assertStringContainsString("import '../../vendor/saucebase/core/stubs/stack/react/js/ssr'", file_get_contents($this->tmpDir.'/resources/js/ssr.tsx'));
+        $this->assertStringContainsString("export { default } from '../../vendor/saucebase/core/stubs/stack/react/js/ssr'", file_get_contents($this->tmpDir.'/resources/js/ssr.tsx'));
     }
 
     public function test_dev_mode_runs_npm_install(): void
