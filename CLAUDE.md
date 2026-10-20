@@ -63,7 +63,7 @@ composer install
 4. `generateSsl()` — mkcert for `*.localhost` (no-op if disabled or certs exist)
 5. `ensureEnvFile()` → `setDockerEnvDefaults()` → `applyDockerEnvDefaults()`: `DB_CONNECTION=mysql`, MySQL creds, `MAIL_MAILER=smtp`, `APP_URL=https://localhost` (or `http://` if SSL off)
 6. `startDocker()` — `docker compose restart` + `up -d --wait --build` (30 min timeout, streaming), cwd = target
-7. `runComposerInContainer()` → `generateAppKey()` → `runMigrations()` via `execInContainer()`
+7. `runComposerInContainer()` → core install steps → `setTaskfilePrefix()` (empty `APP: ''` in `Taskfile.yml` → `'docker compose exec app'`) → `generateAppKey()` → `runMigrations()` via `execInContainer()`
 8. `runStack()` — **runs on the host** (files are volume-mounted) by delegating to `InstallCommand::runStack()`, not inside the container
 9. `installModules()` — batched `composer require` in container → `applyModulePatches()` on host → `modules:sync` / `migrate` / per-module seed in container
 10. `createStorageLink()` + `clearCaches()` in container
