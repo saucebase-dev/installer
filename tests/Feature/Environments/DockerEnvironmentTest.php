@@ -1530,5 +1530,4 @@ class FakeInstallCommand extends InstallCommand
     public function info($string, $verbosity = null): void {}
 
     public function warn($string, $verbosity = null): void {}
-
 }
