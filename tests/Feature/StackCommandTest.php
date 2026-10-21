@@ -18,6 +18,9 @@ class StackCommandTest extends TestCase
     {
         parent::setUp();
 
+        // These tests are about git really tracking files, in a temporary repository.
+        $this->allowRealProcess("'git' *");
+
         $this->files = new Filesystem;
         $this->tmpDir = sys_get_temp_dir().'/saucebase-fw-test-'.uniqid();
         $this->files->makeDirectory($this->tmpDir.'/resources/js', 0755, true);
@@ -78,6 +81,15 @@ class StackCommandTest extends TestCase
         $this->assertSame('vue', $data['framework']);
         $this->assertTrue($data['contributor']);
         $this->assertSame(['framework', 'contributor'], array_keys($data));
+    }
+
+    public function test_the_stack_name_is_case_insensitive(): void
+    {
+        $this->seedFakeStubs('vue');
+
+        $this->artisan('stack Vue --dev')->assertSuccessful();
+
+        $this->assertSame('vue', json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true)['framework']);
     }
 
     public function test_selecting_a_stack_keeps_the_other_settings(): void

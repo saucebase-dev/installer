@@ -6,6 +6,7 @@ use Composer\InstalledVersions;
 use Illuminate\Console\Application as ConsoleApplication;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Http\Client\Factory as HttpFactory;
+use Illuminate\Process\Factory as ProcessFactory;
 use Illuminate\Support\Facades\Facade;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Console\Commands\NewCommand;
@@ -19,6 +20,7 @@ class Application
         $container = new Container;
         Container::setInstance($container);
         $container->singleton(HttpFactory::class);
+        $container->singleton(ProcessFactory::class);
         Facade::setFacadeApplication($container);
 
         $console = new ConsoleApplication($container, new Dispatcher($container), static::version());

@@ -19,6 +19,9 @@ class InstallCommandPatchesTest extends TestCase
     {
         parent::setUp();
 
+        // These tests are about git really applying a patch, in a temporary folder.
+        $this->allowRealProcess("'git' *");
+
         $this->files = new Filesystem;
         $this->dir = sys_get_temp_dir().'/sb-patches-'.uniqid();
         $this->files->ensureDirectoryExists($this->dir.'/app');

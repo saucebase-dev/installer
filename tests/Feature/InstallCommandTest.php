@@ -184,6 +184,8 @@ class InstallCommandTest extends TestCase
 
     public function test_only_a_contributor_install_calls_the_stack_command(): void
     {
+        $this->fakeToolsInstalled();
+
         $this->fakePackagistList();
         $spy = (object) ['stackCallCount' => 0];
 
@@ -258,6 +260,8 @@ class InstallCommandTest extends TestCase
 
     public function test_driver_native_skips_the_select_prompt(): void
     {
+        $this->fakeToolsInstalled();
+
         $spy = (object) ['selectCalled' => false];
 
         $this->bindCommand((function () use ($spy) {
@@ -322,6 +326,7 @@ class InstallCommandTest extends TestCase
 
     public function test_driver_native_runs_install_without_prompting(): void
     {
+        $this->fakeToolsInstalled();
 
         $this->bindCommand((function () {
             return new class extends InstallCommand
@@ -463,6 +468,8 @@ class InstallCommandTest extends TestCase
 
     public function test_install_returns_failure_and_skips_modules_when_database_setup_fails(): void
     {
+        $this->fakeToolsInstalled();
+
         $spy = (object) ['modulesSetupCalled' => false];
 
         $this->bindCommand((function () use ($spy) {
