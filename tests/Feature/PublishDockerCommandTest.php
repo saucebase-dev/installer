@@ -75,6 +75,27 @@ class PublishDockerCommandTest extends TestCase
         $this->assertSame('mine', file_get_contents($this->tmp.'/docker-compose.yml'));
     }
 
+    public function test_a_skipped_file_does_not_stop_the_rest_from_publishing(): void
+    {
+        file_put_contents($this->tmp.'/docker-compose.yml', 'mine');
+
+        $this->artisan("docker:publish --path={$this->tmp}")->assertSuccessful();
+
+        foreach (['docker/Dockerfile', 'docker/nginx.conf', 'docker/php.ini', 'docker/xdebug.ini'] as $file) {
+            $this->assertFileExists($this->tmp.'/'.$file);
+        }
+    }
+
+    public function test_without_the_ssl_option_the_ssl_nginx_config_is_kept(): void
+    {
+        $this->artisan("docker:publish --path={$this->tmp}")->assertSuccessful();
+
+        $this->assertSame(
+            file_get_contents(dirname(__DIR__, 2).'/stubs/docker/docker/nginx.conf'),
+            file_get_contents($this->tmp.'/docker/nginx.conf'),
+        );
+    }
+
     public function test_force_overwrites_existing_files(): void
     {
         file_put_contents($this->tmp.'/docker-compose.yml', 'mine');

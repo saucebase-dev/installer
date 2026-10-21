@@ -80,6 +80,15 @@ class StackCommandTest extends TestCase
         $this->assertSame(['framework', 'contributor'], array_keys($data));
     }
 
+    public function test_the_stack_name_is_case_insensitive(): void
+    {
+        $this->seedFakeStubs('vue');
+
+        $this->artisan('stack Vue --dev')->assertSuccessful();
+
+        $this->assertSame('vue', json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true)['framework']);
+    }
+
     public function test_selecting_a_stack_keeps_the_other_settings(): void
     {
         $this->seedFakeStubs('vue');

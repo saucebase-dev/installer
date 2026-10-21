@@ -1104,9 +1104,25 @@ class DockerEnvironmentTest extends TestCase
     {
         $hosts = $this->exposed()->exposedCertificateHosts('myapp.test');
 
-        $this->assertContains('myapp.test', $hosts);
-        $this->assertContains('*.myapp.test', $hosts);
-        $this->assertContains('localhost', $hosts);
+        // The loopback addresses too, so https://127.0.0.1 is trusted as well.
+        $this->assertSame(['myapp.test', '*.myapp.test', 'localhost', '*.localhost', '127.0.0.1', '::1'], $hosts);
+    }
+
+    public function test_ports_come_from_env_and_fall_back_to_defaults_when_not_numeric(): void
+    {
+        $dir = sys_get_temp_dir().'/sb-ports-'.uniqid();
+        mkdir($dir);
+        file_put_contents($dir.'/.env', "APP_PORT=8080\nAPP_HTTPS_PORT=nope\n");
+
+        try {
+            $ports = $this->exposed()->exposedResolvePorts(new FakeInstallCommand(null, [], ['path' => $dir]));
+        } finally {
+            exec('rm -rf '.escapeshellarg($dir));
+        }
+
+        $this->assertSame(8080, $ports['APP_PORT']);
+        $this->assertSame(443, $ports['APP_HTTPS_PORT']);
+        $this->assertSame(3306, $ports['FORWARD_DB_PORT']);
     }
 
     public function test_certificate_hosts_do_not_repeat_localhost(): void
@@ -1337,6 +1353,12 @@ class DockerEnvironmentTest extends TestCase
             public function exposedApplyNginxSettings(string $conf, string $host, int $http, int $https): string
             {
                 return $this->applyNginxSettings($conf, $host, $http, $https);
+            }
+
+            /** @return array<string, int> */
+            public function exposedResolvePorts(InstallCommand $command): array
+            {
+                return $this->resolvePorts($command);
             }
 
             /** @return string[] */
