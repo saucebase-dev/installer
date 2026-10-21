@@ -231,6 +231,8 @@ class DockerEnvironmentTest extends TestCase
 
     public function test_run_returns_failure_and_skips_composer_when_docker_fails_to_start(): void
     {
+        $this->fakeToolsInstalled();
+
         $spy = (object) ['composerCalled' => false];
 
         $env = new class($spy) extends DockerEnvironment
@@ -266,6 +268,8 @@ class DockerEnvironmentTest extends TestCase
 
     public function test_run_returns_failure_when_composer_install_fails_in_container(): void
     {
+        $this->fakeToolsInstalled();
+
         $spy = (object) ['installCalled' => false];
 
         $env = new class($spy) extends DockerEnvironment
@@ -395,6 +399,20 @@ class DockerEnvironmentTest extends TestCase
             protected function generateSsl(InstallCommand $command): void {}
 
             protected function setDockerEnvDefaults(InstallCommand $command): void {}
+
+            // Stubbed so the test never queries the real Docker for ports or runs
+            // `composer require` in a container: only the module step should fail.
+            protected function checkPorts(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function configureNginx(InstallCommand $command): void {}
+
+            protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
+            {
+                return true;
+            }
 
             protected function startDocker(InstallCommand $command): bool
             {

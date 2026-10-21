@@ -10,7 +10,7 @@ use Saucebase\Installer\Console\Commands\Concerns\DisplaysBanner;
 use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\HerdEnvironment;
 use Saucebase\Installer\ModuleRegistry;
-use Symfony\Component\Process\Process;
+use Illuminate\Support\Facades\Process;
 
 use function Laravel\Prompts\callout;
 use function Laravel\Prompts\select;
@@ -107,11 +107,10 @@ class InstallCommand extends Command
      */
     public function runArtisan(array $args, int $timeout = 120): bool
     {
-        $process = new Process([PHP_BINARY, $this->path('artisan'), ...$args], $this->targetPath());
-        $process->setTimeout($timeout);
-        $process->run();
-
-        return $process->isSuccessful();
+        return Process::path($this->targetPath())
+            ->timeout($timeout)
+            ->run([PHP_BINARY, $this->path('artisan'), ...$args])
+            ->successful();
     }
 
     public function getSelectedStack(): ?string
@@ -274,11 +273,10 @@ class InstallCommand extends Command
     /** @param  string[]  $command */
     public function runProcess(array $command, int $timeout = 300): bool
     {
-        $process = new Process($command, $this->targetPath());
-        $process->setTimeout($timeout);
-        $process->run();
-
-        return $process->isSuccessful();
+        return Process::path($this->targetPath())
+            ->timeout($timeout)
+            ->run($command)
+            ->successful();
     }
 
     /** A contributor checkout runs the UI from saucebase/core instead of owning a copy. */
@@ -836,11 +834,9 @@ class InstallCommand extends Command
 
     private function gitApply(string $patch, string ...$flags): bool
     {
-        $process = new Process(['git', 'apply', '--whitespace=nowarn', ...$flags, $patch]);
-        $process->setWorkingDirectory($this->targetPath());
-        $process->run();
-
-        return $process->isSuccessful();
+        return Process::path($this->targetPath())
+            ->run(['git', 'apply', '--whitespace=nowarn', ...$flags, $patch])
+            ->successful();
     }
 
     /**

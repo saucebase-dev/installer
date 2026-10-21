@@ -4,7 +4,7 @@ namespace Saucebase\Installer\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
-use Symfony\Component\Process\Process;
+use Illuminate\Support\Facades\Process;
 
 use function Laravel\Prompts\select;
 
@@ -155,9 +155,7 @@ class StackCommand extends Command
         $this->restoreTrackedFiles($framework);
 
         foreach ($this->generatedFiles($framework) as $file) {
-            $process = new Process(['git', '-C', $this->basePath, 'checkout', '--', $file]);
-            $process->run();
-            $exitCode = $process->getExitCode();
+            $exitCode = Process::run(['git', '-C', $this->basePath, 'checkout', '--', $file])->exitCode();
 
             if ($exitCode !== 0) {
                 // Module files are tracked in their own repos — skip-worktree was already
@@ -343,10 +341,9 @@ class StackCommand extends Command
         }
 
         foreach ($this->generatedFiles($framework) as $file) {
-            $process = new Process(['git', '-C', $this->basePath, 'update-index', '--skip-worktree', $file]);
-            $process->run();
+            $result = Process::run(['git', '-C', $this->basePath, 'update-index', '--skip-worktree', $file]);
 
-            if ($process->getExitCode() !== 0) {
+            if ($result->exitCode() !== 0) {
                 $this->warn("Could not skip-worktree {$file} (not in git index).");
             }
         }
@@ -355,7 +352,7 @@ class StackCommand extends Command
     private function restoreTrackedFiles(string $framework): void
     {
         foreach ($this->generatedFiles($framework) as $file) {
-            (new Process(['git', '-C', $this->basePath, 'update-index', '--no-skip-worktree', $file]))->run();
+            Process::run(['git', '-C', $this->basePath, 'update-index', '--no-skip-worktree', $file]);
         }
     }
 
@@ -366,11 +363,11 @@ class StackCommand extends Command
     protected function runNpmInstall(): void
     {
         $this->info('Running npm install...');
-        $process = new Process(['npm', 'install'], $this->basePath);
-        $process->setTimeout(300);
-        $process->run(fn ($_type, $buffer) => $this->output->write($buffer));
+        $result = Process::path($this->basePath)
+            ->timeout(300)
+            ->run(['npm', 'install'], fn ($_type, $buffer) => $this->output->write($buffer));
 
-        if (! $process->isSuccessful()) {
+        if (! $result->successful()) {
             $this->warn('npm install failed. Run manually: npm install');
         }
     }

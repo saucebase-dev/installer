@@ -3,7 +3,7 @@
 namespace Saucebase\Installer\Environments;
 
 use Saucebase\Installer\Console\Commands\InstallCommand;
-use Symfony\Component\Process\Process;
+use Illuminate\Support\Facades\Process;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\select;
@@ -182,17 +182,16 @@ class DockerEnvironment extends Environment
         $command->info('Generating SSL certificates...');
         @mkdir(dirname($certFile), 0755, true);
 
-        (new Process(['mkcert', '-install']))->run();
+        Process::run(['mkcert', '-install']);
 
-        $cert = new Process([
+        $cert = Process::run([
             'mkcert',
             '-key-file', $keyFile,
             '-cert-file', $certFile,
             ...$this->certificateHosts($host),
         ]);
-        $cert->run();
 
-        if (! $cert->isSuccessful()) {
+        if (! $cert->successful()) {
             $command->warn('SSL generation failed. Run mkcert manually if HTTPS is needed.');
         }
     }
@@ -213,16 +212,14 @@ class DockerEnvironment extends Environment
      */
     protected function certCoversHost(string $certFile, string $host): bool
     {
-        $process = new Process(['openssl', 'x509', '-in', $certFile, '-noout', '-text']);
-        $process->setTimeout(15);
-        $process->run();
+        $result = Process::timeout(15)->run(['openssl', 'x509', '-in', $certFile, '-noout', '-text']);
 
-        if (! $process->isSuccessful()) {
+        if (! $result->successful()) {
             return false;
         }
 
         // Anchor the end so "DNS:myapp.test" does not satisfy a request for "app.test".
-        return preg_match('/DNS:'.preg_quote($host, '/').'(?=[,\s]|$)/', $process->getOutput()) === 1;
+        return preg_match('/DNS:'.preg_quote($host, '/').'(?=[,\s]|$)/', $result->output()) === 1;
     }
 
     /**
@@ -380,27 +377,25 @@ class DockerEnvironment extends Environment
     /** @return string[] Names of the containers belonging to this app's own Compose project. */
     protected function ownContainers(InstallCommand $command): array
     {
-        $process = new Process(['docker', 'compose', 'ps', '--format', '{{.Name}}'], $command->targetPath());
-        $process->setTimeout(15);
-        $process->run();
+        $result = Process::path($command->targetPath())
+            ->timeout(15)
+            ->run(['docker', 'compose', 'ps', '--format', '{{.Name}}']);
 
-        if (! $process->isSuccessful()) {
+        if (! $result->successful()) {
             return [];
         }
 
-        return array_values(array_filter(array_map('trim', preg_split('/\R/', $process->getOutput()) ?: [])));
+        return array_values(array_filter(array_map('trim', preg_split('/\R/', $result->output()) ?: [])));
     }
 
     /** @return array<int, array{container: string, project: string|null}> Host port => owner. */
     protected function dockerPortOwners(): array
     {
-        $process = new Process([
+        $result = Process::timeout(15)->run([
             'docker', 'ps', '--format', '{{.Ports}}|{{.Names}}|{{.Label "com.docker.compose.project"}}',
         ]);
-        $process->setTimeout(15);
-        $process->run();
 
-        return $process->isSuccessful() ? $this->parseDockerPortOwners($process->getOutput()) : [];
+        return $result->successful() ? $this->parseDockerPortOwners($result->output()) : [];
     }
 
     /** @return array<int, array{container: string, project: string|null}> */
@@ -498,14 +493,12 @@ class DockerEnvironment extends Environment
         foreach ($targets as $target) {
             $command->info('Stopping '.($target['project'] ?? $target['container']).'...');
 
-            $process = $target['project'] !== null
-                ? new Process(['docker', 'compose', '-p', $target['project'], 'stop'])
-                : new Process(['docker', 'stop', $target['container']]);
-            $process->setTimeout(120);
-            $process->run();
+            $result = Process::timeout(120)->run($target['project'] !== null
+                ? ['docker', 'compose', '-p', $target['project'], 'stop']
+                : ['docker', 'stop', $target['container']]);
 
-            if (! $process->isSuccessful()) {
-                $command->error('Failed to stop '.($target['project'] ?? $target['container']).': '.$process->getErrorOutput());
+            if (! $result->successful()) {
+                $command->error('Failed to stop '.($target['project'] ?? $target['container']).': '.$result->errorOutput());
             }
         }
 
@@ -577,13 +570,13 @@ class DockerEnvironment extends Environment
         // a container that comes back up can lose its host port bindings. `up` then sees
         // an unchanged config hash, considers it up to date, and never repairs it.
         // `up -d` alone already creates what is missing and recreates what changed.
-        $up = new Process(['docker', 'compose', 'up', '-d', '--wait', '--build'], $command->targetPath());
-        $up->setTimeout(30 * 60); // 30 minutes — first run pulls images + builds layers
-        $up->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
+        $up = Process::path($command->targetPath())
+            ->timeout(30 * 60) // 30 minutes — first run pulls images + builds layers
+            ->run(['docker', 'compose', 'up', '-d', '--wait', '--build'], fn ($_type, $buffer) => $command->line(trim($buffer)));
         $command->newLine();
 
-        if (! $up->isSuccessful()) {
-            $command->error('Docker failed to start: '.$up->getErrorOutput());
+        if (! $up->successful()) {
+            $command->error('Docker failed to start: '.$up->errorOutput());
 
             return false;
         }
@@ -639,46 +632,40 @@ class DockerEnvironment extends Environment
     {
         // --force-recreate is the only thing that fixes an already-running container
         // with dropped bindings; a plain `up` leaves it alone.
-        $process = new Process(
-            ['docker', 'compose', 'up', '-d', '--force-recreate', 'nginx'],
-            $command->targetPath(),
-        );
-        $process->setTimeout(120);
-        $process->run();
+        Process::path($command->targetPath())
+            ->timeout(120)
+            ->run(['docker', 'compose', 'up', '-d', '--force-recreate', 'nginx']);
     }
 
     protected function runComposerInContainer(InstallCommand $command): bool
     {
         $command->info('Installing PHP dependencies...');
-        $process = new Process(['docker', 'compose', 'exec', '-T', 'app', 'composer', 'install'], $command->targetPath());
-        $process->setTimeout(300);
-        $process->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
+        $result = Process::path($command->targetPath())
+            ->timeout(300)
+            ->run(['docker', 'compose', 'exec', '-T', 'app', 'composer', 'install'], fn ($_type, $buffer) => $command->line(trim($buffer)));
 
-        if (! $process->isSuccessful()) {
+        if (! $result->successful()) {
             $command->error('composer install failed inside container.');
         }
 
-        return $process->isSuccessful();
+        return $result->successful();
     }
 
     /** `$quiet` holds the output back unless the command fails, so a task line stays clean. */
     protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
     {
-        $process = $this->containerProcess($command, $args);
-        $process->setTimeout($timeout);
-        $process->run($quiet ? null : fn ($_type, $buffer) => $command->line(trim($buffer)));
+        $result = Process::path($command->targetPath())
+            ->timeout($timeout)
+            ->run(
+                array_merge(['docker', 'compose', 'exec', '-T', 'app'], $args),
+                $quiet ? null : fn ($_type, $buffer) => $command->line(trim($buffer)),
+            );
 
-        if ($quiet && ! $process->isSuccessful()) {
-            $command->line(trim($process->getOutput().$process->getErrorOutput()));
+        if ($quiet && ! $result->successful()) {
+            $command->line(trim($result->output().$result->errorOutput()));
         }
 
-        return $process->isSuccessful();
-    }
-
-    /** @param  string[]  $args */
-    protected function containerProcess(InstallCommand $command, array $args): Process
-    {
-        return new Process(array_merge(['docker', 'compose', 'exec', '-T', 'app'], $args), $command->targetPath());
+        return $result->successful();
     }
 
     protected function generateAppKey(InstallCommand $command): bool
@@ -713,14 +700,11 @@ class DockerEnvironment extends Environment
             return true;
         }
 
-        $process = new Process(
-            ['docker', 'compose', 'exec', '-T', 'mysql', 'mysql', '-uroot', '-p'.$password, '-e', $sql],
-            $command->targetPath(),
-        );
-        $process->setTimeout(60);
-        $process->run();
+        $result = Process::path($command->targetPath())
+            ->timeout(60)
+            ->run(['docker', 'compose', 'exec', '-T', 'mysql', 'mysql', '-uroot', '-p'.$password, '-e', $sql]);
 
-        if ($process->isSuccessful()) {
+        if ($result->successful()) {
             return true;
         }
 
@@ -905,6 +889,6 @@ class DockerEnvironment extends Environment
 
     protected function dockerComposeAvailable(): bool
     {
-        return (bool) shell_exec('docker compose version 2>/dev/null');
+        return trim(Process::run(['docker', 'compose', 'version'])->output()) !== '';
     }
 }

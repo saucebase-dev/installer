@@ -2,6 +2,7 @@
 
 namespace Saucebase\Installer\Environments;
 
+use Illuminate\Support\Facades\Process;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 
 abstract class Environment
@@ -170,6 +171,6 @@ abstract class Environment
 
     protected function commandExists(string $name): bool
     {
-        return (bool) shell_exec("which {$name} 2>/dev/null");
+        return trim(Process::run(['which', $name])->output()) !== '';
     }
 }

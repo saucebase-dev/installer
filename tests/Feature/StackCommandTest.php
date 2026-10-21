@@ -18,6 +18,9 @@ class StackCommandTest extends TestCase
     {
         parent::setUp();
 
+        // These tests are about git really tracking files, in a temporary repository.
+        $this->allowRealProcess("'git' *");
+
         $this->files = new Filesystem;
         $this->tmpDir = sys_get_temp_dir().'/saucebase-fw-test-'.uniqid();
         $this->files->makeDirectory($this->tmpDir.'/resources/js', 0755, true);
