@@ -2,8 +2,8 @@
 
 namespace Saucebase\Installer\Environments;
 
-use Saucebase\Installer\Console\Commands\InstallCommand;
 use Illuminate\Support\Facades\Process;
+use Saucebase\Installer\Console\Commands\InstallCommand;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\select;

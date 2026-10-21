@@ -4,9 +4,9 @@ namespace Saucebase\Installer\Tests;
 
 use Illuminate\Console\Application as ConsoleApplication;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Facade;
 use Illuminate\Process\PendingProcess;
 use Illuminate\Process\ProcessResult;
+use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\Facades\Process;
 use PHPUnit\Framework\TestCase as BaseTestCase;
 use Saucebase\Installer\Console\Application;

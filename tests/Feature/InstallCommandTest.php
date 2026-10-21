@@ -328,7 +328,6 @@ class InstallCommandTest extends TestCase
     {
         $this->fakeToolsInstalled();
 
-
         $this->bindCommand((function () {
             return new class extends InstallCommand
             {

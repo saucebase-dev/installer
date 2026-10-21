@@ -3,6 +3,7 @@
 namespace Saucebase\Installer\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use Laravel\Prompts\Elements\Element;
 use Laravel\Prompts\Elements\ElementContract;
@@ -10,7 +11,6 @@ use Saucebase\Installer\Console\Commands\Concerns\DisplaysBanner;
 use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\HerdEnvironment;
 use Saucebase\Installer\ModuleRegistry;
-use Illuminate\Support\Facades\Process;
 
 use function Laravel\Prompts\callout;
 use function Laravel\Prompts\select;
