@@ -110,6 +110,7 @@ class DockerEnvironment extends Environment
             }
         }
 
+        $this->setTaskfilePrefix($command);
         $command->nameProject();
 
         if (! $this->generateAppKey($command)) {
@@ -805,6 +806,28 @@ class DockerEnvironment extends Environment
             file_put_contents($path, $modified);
             $command->info('Docker settings written to .env.');
         }
+    }
+
+    /** Core's Taskfile stub ships an empty APP prefix; under Docker, tasks run in the app container. */
+    protected function setTaskfilePrefix(InstallCommand $command): void
+    {
+        $path = $command->path('Taskfile.yml');
+
+        if (! is_file($path)) {
+            return;
+        }
+
+        $original = (string) file_get_contents($path);
+        $modified = $this->applyDockerTaskPrefix($original);
+
+        if ($modified !== $original) {
+            file_put_contents($path, $modified);
+        }
+    }
+
+    protected function applyDockerTaskPrefix(string $taskfile): string
+    {
+        return preg_replace("/^(\s*APP:\s*)''/m", "$1'docker compose exec app'", $taskfile, 1) ?? $taskfile;
     }
 
     /** @param  array<string, int>  $ports  Env key => port, forced over any existing value. */

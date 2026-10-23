@@ -667,6 +667,24 @@ class DockerEnvironmentTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // applyDockerTaskPrefix
+    // -------------------------------------------------------------------------
+
+    public function test_sets_the_empty_taskfile_prefix_to_the_app_container(): void
+    {
+        $result = $this->applyTaskPrefix("vars:\n  # Prefix\n  APP: ''\n\ntasks:\n");
+
+        $this->assertSame("vars:\n  # Prefix\n  APP: 'docker compose exec app'\n\ntasks:\n", $result);
+    }
+
+    public function test_keeps_a_taskfile_prefix_already_set(): void
+    {
+        $taskfile = "vars:\n  APP: 'sail'\n";
+
+        $this->assertSame($taskfile, $this->applyTaskPrefix($taskfile));
+    }
+
+    // -------------------------------------------------------------------------
     // applyDockerEnvDefaults
     // -------------------------------------------------------------------------
 
@@ -1421,6 +1439,19 @@ class DockerEnvironmentTest extends TestCase
                 $this->ssl = $ssl;
             }
         };
+    }
+
+    private function applyTaskPrefix(string $taskfile): string
+    {
+        $exposed = new class extends DockerEnvironment
+        {
+            public function applyDockerTaskPrefix(string $taskfile): string
+            {
+                return parent::applyDockerTaskPrefix($taskfile);
+            }
+        };
+
+        return $exposed->applyDockerTaskPrefix($taskfile);
     }
 
     private function applyDefaults(string $env, bool $ssl = true, array $ports = []): string
