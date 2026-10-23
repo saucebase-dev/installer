@@ -106,14 +106,15 @@ class StackCommandTest extends TestCase
         );
     }
 
-    public function test_dev_mode_writes_app_and_ssr_shims(): void
+    public function test_dev_mode_writes_only_the_app_shim(): void
     {
         $this->seedFakeStubs('vue');
 
         $this->artisan('stack vue --dev')->assertSuccessful();
 
         $this->assertStringContainsString("import '../../vendor/saucebase/core/stubs/stack/vue/js/app'", file_get_contents($this->tmpDir.'/resources/js/app.ts'));
-        $this->assertStringContainsString("export { default } from '../../vendor/saucebase/core/stubs/stack/vue/js/ssr'", file_get_contents($this->tmpDir.'/resources/js/ssr.ts'));
+        // The Inertia Vite plugin renders on the server from app.ts: there is no ssr entry.
+        $this->assertFileDoesNotExist($this->tmpDir.'/resources/js/ssr.ts');
     }
 
     public function test_dev_mode_react_writes_tsx_entry_points(): void
@@ -123,7 +124,7 @@ class StackCommandTest extends TestCase
         $this->artisan('stack react --dev')->assertSuccessful();
 
         $this->assertStringContainsString("import '../../vendor/saucebase/core/stubs/stack/react/js/app'", file_get_contents($this->tmpDir.'/resources/js/app.tsx'));
-        $this->assertStringContainsString("export { default } from '../../vendor/saucebase/core/stubs/stack/react/js/ssr'", file_get_contents($this->tmpDir.'/resources/js/ssr.tsx'));
+        $this->assertFileDoesNotExist($this->tmpDir.'/resources/js/ssr.tsx');
     }
 
     public function test_dev_mode_runs_npm_install(): void
@@ -205,15 +206,16 @@ class StackCommandTest extends TestCase
         $this->assertStringContainsString('vendor/saucebase/core/stubs/stack/vue/js/*', $tsconfig);
     }
 
-    public function test_dev_mode_writes_module_entry_point(): void
+    public function test_dev_mode_writes_no_module_entry_point(): void
     {
         $this->seedFakeStubs('vue');
         $this->seedFakeModule('testmodule', 'vue');
 
         $this->artisan('stack vue --dev')->assertSuccessful();
 
-        $entryPoint = file_get_contents($this->tmpDir.'/modules/testmodule/resources/js/app.ts');
-        $this->assertStringContainsString("from './vue/app'", $entryPoint);
+        // Core finds a module's setup in resources/js/vue/app.ts itself, so module
+        // repos carry no shim for the command to rewrite on every stack switch.
+        $this->assertFileDoesNotExist($this->tmpDir.'/modules/testmodule/resources/js/app.ts');
     }
 
     public function test_dev_mode_skips_module_without_framework_dir(): void
@@ -321,22 +323,21 @@ class StackCommandTest extends TestCase
     {
         $this->seedFakeStubs('react');
 
-        // app.tsx and ssr.tsx are created by the command but not in git — warn for each
+        // app.tsx is created by the command but not in git — warn for it
         $this->artisan('stack react --dev')
             ->assertSuccessful()
             ->expectsOutputToContain('Could not skip-worktree resources/js/app.tsx')
-            ->expectsOutputToContain('Could not skip-worktree resources/js/ssr.tsx');
+            ->doesntExpectOutputToContain('resources/js/ssr.tsx');
     }
 
-    public function test_dev_mode_warns_for_untracked_module_entry_points(): void
+    public function test_dev_mode_leaves_module_files_out_of_skip_worktree(): void
     {
         $this->seedFakeStubs('vue');
         $this->seedFakeModule('testmodule', 'vue');
-        // module entry point not committed — should warn
 
         $this->artisan('stack vue --dev')
             ->assertSuccessful()
-            ->expectsOutputToContain('Could not skip-worktree modules/testmodule/resources/js/app.ts');
+            ->doesntExpectOutputToContain('modules/testmodule');
     }
 
     public function test_dev_mode_no_warnings_for_tracked_config_files(): void
@@ -434,12 +435,10 @@ class StackCommandTest extends TestCase
         $this->artisan('stack vue --dev')->assertSuccessful();
 
         $this->assertFileExists($this->tmpDir.'/resources/js/app.ts');
-        $this->assertFileExists($this->tmpDir.'/resources/js/ssr.ts');
 
         $this->artisan('stack --reset')->assertSuccessful();
 
         $this->assertFileDoesNotExist($this->tmpDir.'/resources/js/app.ts');
-        $this->assertFileDoesNotExist($this->tmpDir.'/resources/js/ssr.ts');
     }
 
     public function test_reset_preserves_module_entry_points(): void
@@ -447,13 +446,14 @@ class StackCommandTest extends TestCase
         $this->seedFakeStubs('vue');
         $this->seedFakeModule('testmodule', 'vue');
 
-        $this->artisan('stack vue --dev')->assertSuccessful();
-        $this->assertFileExists($this->tmpDir.'/modules/testmodule/resources/js/app.ts');
+        // A flattened (installed) module keeps its real entry at the root.
+        file_put_contents($this->tmpDir.'/modules/testmodule/resources/js/app.ts', '// module');
 
+        $this->artisan('stack vue --dev')->assertSuccessful();
         $this->artisan('stack --reset')->assertSuccessful();
 
-        // Module app.ts is tracked in the module's own repo — reset must not delete it.
-        $this->assertFileExists($this->tmpDir.'/modules/testmodule/resources/js/app.ts');
+        // Module app.ts is tracked in the module's own repo — neither command touches it.
+        $this->assertSame('// module', file_get_contents($this->tmpDir.'/modules/testmodule/resources/js/app.ts'));
     }
 
     public function test_reset_deletes_package_lock(): void
