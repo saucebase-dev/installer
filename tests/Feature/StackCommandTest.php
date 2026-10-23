@@ -106,14 +106,15 @@ class StackCommandTest extends TestCase
         );
     }
 
-    public function test_dev_mode_writes_app_and_ssr_shims(): void
+    public function test_dev_mode_writes_only_the_app_shim(): void
     {
         $this->seedFakeStubs('vue');
 
         $this->artisan('stack vue --dev')->assertSuccessful();
 
         $this->assertStringContainsString("import '../../vendor/saucebase/core/stubs/stack/vue/js/app'", file_get_contents($this->tmpDir.'/resources/js/app.ts'));
-        $this->assertStringContainsString("export { default } from '../../vendor/saucebase/core/stubs/stack/vue/js/ssr'", file_get_contents($this->tmpDir.'/resources/js/ssr.ts'));
+        // The Inertia Vite plugin renders on the server from app.ts: there is no ssr entry.
+        $this->assertFileDoesNotExist($this->tmpDir.'/resources/js/ssr.ts');
     }
 
     public function test_dev_mode_react_writes_tsx_entry_points(): void
@@ -123,7 +124,7 @@ class StackCommandTest extends TestCase
         $this->artisan('stack react --dev')->assertSuccessful();
 
         $this->assertStringContainsString("import '../../vendor/saucebase/core/stubs/stack/react/js/app'", file_get_contents($this->tmpDir.'/resources/js/app.tsx'));
-        $this->assertStringContainsString("export { default } from '../../vendor/saucebase/core/stubs/stack/react/js/ssr'", file_get_contents($this->tmpDir.'/resources/js/ssr.tsx'));
+        $this->assertFileDoesNotExist($this->tmpDir.'/resources/js/ssr.tsx');
     }
 
     public function test_dev_mode_runs_npm_install(): void
@@ -321,11 +322,11 @@ class StackCommandTest extends TestCase
     {
         $this->seedFakeStubs('react');
 
-        // app.tsx and ssr.tsx are created by the command but not in git — warn for each
+        // app.tsx is created by the command but not in git — warn for it
         $this->artisan('stack react --dev')
             ->assertSuccessful()
             ->expectsOutputToContain('Could not skip-worktree resources/js/app.tsx')
-            ->expectsOutputToContain('Could not skip-worktree resources/js/ssr.tsx');
+            ->doesntExpectOutputToContain('resources/js/ssr.tsx');
     }
 
     public function test_dev_mode_warns_for_untracked_module_entry_points(): void
@@ -434,12 +435,10 @@ class StackCommandTest extends TestCase
         $this->artisan('stack vue --dev')->assertSuccessful();
 
         $this->assertFileExists($this->tmpDir.'/resources/js/app.ts');
-        $this->assertFileExists($this->tmpDir.'/resources/js/ssr.ts');
 
         $this->artisan('stack --reset')->assertSuccessful();
 
         $this->assertFileDoesNotExist($this->tmpDir.'/resources/js/app.ts');
-        $this->assertFileDoesNotExist($this->tmpDir.'/resources/js/ssr.ts');
     }
 
     public function test_reset_preserves_module_entry_points(): void

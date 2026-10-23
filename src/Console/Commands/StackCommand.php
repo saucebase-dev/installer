@@ -116,7 +116,6 @@ class StackCommand extends Command
         $ext = $this->appExtension($framework);
         $source = '../../'.self::CORE_STACK."/{$framework}/js";
         $this->files->put($this->jsRoot."/app.{$ext}", "import '{$source}/app';\n");
-        $this->files->put($this->jsRoot."/ssr.{$ext}", "export { default } from '{$source}/ssr';\n");
 
         // module entry points must be written before skipGeneratedFiles so their paths are discovered
         $this->updateModuleEntryPoints($framework);
@@ -419,7 +418,6 @@ class StackCommand extends Command
             ...self::CONFIG_FILES,
             ...array_map(fn (string $f) => "resources/views/{$f}", self::VIEW_FILES),
             "resources/js/app.{$ext}",
-            "resources/js/ssr.{$ext}",
             'saucebase.json',
         ];
 
