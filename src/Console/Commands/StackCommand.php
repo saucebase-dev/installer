@@ -117,9 +117,6 @@ class StackCommand extends Command
         $source = '../../'.self::CORE_STACK."/{$framework}/js";
         $this->files->put($this->jsRoot."/app.{$ext}", "import '{$source}/app';\n");
 
-        // module entry points must be written before skipGeneratedFiles so their paths are discovered
-        $this->updateModuleEntryPoints($framework);
-
         $this->writeProjectJson($framework);
         $this->skipGeneratedFiles($framework);
 
@@ -157,12 +154,6 @@ class StackCommand extends Command
             $exitCode = Process::run(['git', '-C', $this->basePath, 'checkout', '--', $file])->exitCode();
 
             if ($exitCode !== 0) {
-                // Module files are tracked in their own repos — skip-worktree was already
-                // cleared above; don't delete or warn, the content is already correct.
-                if (str_starts_with($file, 'modules/')) {
-                    continue;
-                }
-
                 $abs = $this->basePath.'/'.$file;
                 if ($this->files->exists($abs)) {
                     $this->files->delete($abs);
@@ -310,25 +301,6 @@ class StackCommand extends Command
         }
     }
 
-    private function updateModuleEntryPoints(string $framework): void
-    {
-        $moduleDirs = glob($this->basePath.'/modules/*/', GLOB_ONLYDIR);
-
-        if (! $moduleDirs) {
-            return;
-        }
-
-        foreach ($moduleDirs as $moduleDir) {
-            $jsRoot = $moduleDir.'resources/js';
-
-            if (! $this->files->isDirectory($jsRoot.'/'.$framework)) {
-                continue;
-            }
-
-            $this->files->put($jsRoot.'/app.ts', "export * from './{$framework}/app';\n");
-        }
-    }
-
     // -------------------------------------------------------------------------
     // Git helpers
     // -------------------------------------------------------------------------
@@ -420,10 +392,6 @@ class StackCommand extends Command
             "resources/js/app.{$ext}",
             'saucebase.json',
         ];
-
-        foreach (glob($this->basePath.'/modules/*/resources/js/app.ts') ?: [] as $path) {
-            $files[] = str_replace($this->basePath.'/', '', $path);
-        }
 
         return $files;
     }

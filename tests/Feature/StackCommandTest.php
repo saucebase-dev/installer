@@ -206,15 +206,16 @@ class StackCommandTest extends TestCase
         $this->assertStringContainsString('vendor/saucebase/core/stubs/stack/vue/js/*', $tsconfig);
     }
 
-    public function test_dev_mode_writes_module_entry_point(): void
+    public function test_dev_mode_writes_no_module_entry_point(): void
     {
         $this->seedFakeStubs('vue');
         $this->seedFakeModule('testmodule', 'vue');
 
         $this->artisan('stack vue --dev')->assertSuccessful();
 
-        $entryPoint = file_get_contents($this->tmpDir.'/modules/testmodule/resources/js/app.ts');
-        $this->assertStringContainsString("from './vue/app'", $entryPoint);
+        // Core finds a module's setup in resources/js/vue/app.ts itself, so module
+        // repos carry no shim for the command to rewrite on every stack switch.
+        $this->assertFileDoesNotExist($this->tmpDir.'/modules/testmodule/resources/js/app.ts');
     }
 
     public function test_dev_mode_skips_module_without_framework_dir(): void
@@ -329,15 +330,14 @@ class StackCommandTest extends TestCase
             ->doesntExpectOutputToContain('resources/js/ssr.tsx');
     }
 
-    public function test_dev_mode_warns_for_untracked_module_entry_points(): void
+    public function test_dev_mode_leaves_module_files_out_of_skip_worktree(): void
     {
         $this->seedFakeStubs('vue');
         $this->seedFakeModule('testmodule', 'vue');
-        // module entry point not committed — should warn
 
         $this->artisan('stack vue --dev')
             ->assertSuccessful()
-            ->expectsOutputToContain('Could not skip-worktree modules/testmodule/resources/js/app.ts');
+            ->doesntExpectOutputToContain('modules/testmodule');
     }
 
     public function test_dev_mode_no_warnings_for_tracked_config_files(): void
@@ -446,13 +446,14 @@ class StackCommandTest extends TestCase
         $this->seedFakeStubs('vue');
         $this->seedFakeModule('testmodule', 'vue');
 
-        $this->artisan('stack vue --dev')->assertSuccessful();
-        $this->assertFileExists($this->tmpDir.'/modules/testmodule/resources/js/app.ts');
+        // A flattened (installed) module keeps its real entry at the root.
+        file_put_contents($this->tmpDir.'/modules/testmodule/resources/js/app.ts', '// module');
 
+        $this->artisan('stack vue --dev')->assertSuccessful();
         $this->artisan('stack --reset')->assertSuccessful();
 
-        // Module app.ts is tracked in the module's own repo — reset must not delete it.
-        $this->assertFileExists($this->tmpDir.'/modules/testmodule/resources/js/app.ts');
+        // Module app.ts is tracked in the module's own repo — neither command touches it.
+        $this->assertSame('// module', file_get_contents($this->tmpDir.'/modules/testmodule/resources/js/app.ts'));
     }
 
     public function test_reset_deletes_package_lock(): void
