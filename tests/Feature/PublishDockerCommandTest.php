@@ -51,6 +51,31 @@ class PublishDockerCommandTest extends TestCase
         $this->assertStringContainsString('start_period: 60s', $mysql);
     }
 
+    public function test_backing_services_are_only_reachable_from_this_machine(): void
+    {
+        $this->artisan("docker:publish --path={$this->tmp}")->assertSuccessful();
+
+        // MySQL, Redis and Mailpit run with default credentials; on 0.0.0.0 anyone on
+        // the network could reach them. The app's own ports stay open for other devices.
+        $compose = (string) file_get_contents($this->tmp.'/docker-compose.yml');
+        foreach (['FORWARD_DB_PORT', 'FORWARD_REDIS_PORT', 'FORWARD_MAILPIT_PORT', 'FORWARD_MAILPIT_DASHBOARD_PORT'] as $port) {
+            $this->assertStringContainsString("'127.0.0.1:\${{$port}:-", $compose, $port);
+        }
+        $this->assertStringContainsString("'\${APP_PORT:-80}:80'", $compose);
+    }
+
+    public function test_pages_are_server_rendered_by_their_own_service(): void
+    {
+        $this->artisan("docker:publish --path={$this->tmp}")->assertSuccessful();
+
+        // Without a renderer, pages reach the browser empty and only render there.
+        $compose = (string) file_get_contents($this->tmp.'/docker-compose.yml');
+        $ssr = substr($compose, (int) strpos($compose, "\n    ssr:\n"), 600);
+        $this->assertStringContainsString('command: node bootstrap/ssr/app.js', $ssr);
+        $app = substr($compose, (int) strpos($compose, "\n    app:\n"), (int) strpos($compose, "\n    nginx:\n"));
+        $this->assertStringContainsString('INERTIA_SSR_URL=http://ssr:13714', $app);
+    }
+
     public function test_a_script_the_application_serves_itself_reaches_it(): void
     {
         // Livewire serves its script from a route. Answering every missing .js with a 404

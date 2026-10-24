@@ -57,8 +57,8 @@ class HerdEnvironment extends NativeEnvironment
     protected function nextSteps(InstallCommand $command): array
     {
         return [
-            'Install frontend dependencies: `npm install`',
-            'Start Vite: `npm run dev`',
+            ...($this->frontendBuilt ? [] : ['Install frontend dependencies: `npm install`']),
+            $this->frontendBuilt ? 'For live reload while you edit: `npm run dev`' : 'Start Vite: `npm run dev`',
             'Open your app: `'.($this->readEnvValue($command, 'APP_URL') ?? '').'`',
         ];
     }

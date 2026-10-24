@@ -4,6 +4,7 @@ namespace Saucebase\Installer\Tests\Feature;
 
 use Illuminate\Filesystem\Filesystem;
 use Saucebase\Installer\Tests\TestCase;
+use Symfony\Component\Console\Output\OutputInterface;
 
 /**
  * A module wires itself into the application with patches. One that does not apply
@@ -53,6 +54,17 @@ class InstallCommandPatchesTest extends TestCase
 
         $this->assertTrue($command->applyModulePatches(['saucebase/auth']));
         $this->assertStringContainsString('use Sociable;', $this->files->get($this->dir.'/app/User.php'));
+    }
+
+    public function test_an_applied_patch_is_only_reported_when_verbose(): void
+    {
+        $this->files->put($this->dir.'/app/User.php', "class User\n{\n}\n");
+        $command = $this->command();
+
+        $command->applyModulePatches(['saucebase/auth']);
+
+        // Several modules ship a `user.patch`, so the line names the module.
+        $this->assertSame([['Applied patch: auth/user.patch', OutputInterface::VERBOSITY_VERBOSE]], $command->notes);
     }
 
     public function test_a_patch_already_applied_is_skipped_without_a_warning(): void
@@ -106,7 +118,13 @@ class InstallCommandPatchesTest extends TestCase
                 $this->problems[] = $string;
             }
 
-            public function info($string, $verbosity = null): void {}
+            /** @var array<int, array{0: string, 1: int|string|null}> */
+            public array $notes = [];
+
+            public function info($string, $verbosity = null): void
+            {
+                $this->notes[] = [$string, $verbosity];
+            }
         };
         $command->fakeOptions = ['path' => $this->dir];
 

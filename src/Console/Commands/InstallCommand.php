@@ -11,6 +11,7 @@ use Saucebase\Installer\Console\Commands\Concerns\DisplaysBanner;
 use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\HerdEnvironment;
 use Saucebase\Installer\ModuleRegistry;
+use Symfony\Component\Console\Output\OutputInterface;
 
 use function Laravel\Prompts\callout;
 use function Laravel\Prompts\select;
@@ -814,7 +815,8 @@ class InstallCommand extends Command
                     }
 
                     if ($this->gitApply($patch)) {
-                        $this->info('Applied patch: '.basename($patch));
+                        // Routine wiring, so only with -v. Named by module: several ship a user.patch.
+                        $this->info("Applied patch: {$name}/".basename($patch), OutputInterface::VERBOSITY_VERBOSE);
 
                         continue;
                     }
@@ -909,7 +911,9 @@ class InstallCommand extends Command
         return array_filter([
             $steps ? 'You can start your local development using:' : null,
             $steps ? Element::numberedList(array_values($steps)) : null,
-            'Learn more: '.Element::link('https://github.com/saucebase-dev/saucebase'),
+            // Plain: a hyperlink's escape codes count towards the box width and push its
+            // border out, and terminals link a bare URL by themselves.
+            'Learn more: https://github.com/saucebase-dev/saucebase',
         ]);
     }
 

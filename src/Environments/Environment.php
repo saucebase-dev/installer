@@ -10,6 +10,9 @@ abstract class Environment
     /** Label of the step that failed, for the failure callout. Set via fail(). */
     protected ?string $failedStep = null;
 
+    /** Whether buildFrontend() left built assets, so the next steps skip the build. */
+    protected bool $frontendBuilt = false;
+
     public static function make(string $name): Environment
     {
         return match ($name) {
@@ -48,6 +51,16 @@ abstract class Environment
         $result = $this->boot($command);
 
         if ($result === InstallCommand::SUCCESS) {
+            $this->frontendBuilt = $this->buildFrontend($command);
+
+            // A module that doesn't fit the installed core installs fine and then breaks
+            // every request, so "complete" waits until the app has actually booted.
+            if (! $this->artisan($command, ['about', '--only=environment'])) {
+                $result = $this->fail('Checking the app boots');
+            }
+        }
+
+        if ($result === InstallCommand::SUCCESS) {
             $command->displaySuccess(array_merge($this->cdStep($command), $this->nextSteps($command), $this->demoStep($command)));
         } else {
             // Single exit point for every failing step in boot() — the install must
@@ -56,6 +69,33 @@ abstract class Environment
         }
 
         return $result;
+    }
+
+    /**
+     * Builds the assets so the app's URL works before anyone runs Vite. Node isn't a
+     * prerequisite, so without npm, or when the build fails, it stays a next step.
+     */
+    protected function buildFrontend(InstallCommand $command): bool
+    {
+        if (! $this->commandExists('npm')) {
+            return false;
+        }
+
+        $command->info('Building the frontend...');
+
+        if ($command->runProcess(['npm', 'install'], 600) && $command->runProcess(['npm', 'run', 'build'], 600)) {
+            return true;
+        }
+
+        $command->warn('Building the frontend failed. Run `npm install && npm run build` in the app to see why.');
+
+        return false;
+    }
+
+    /** @param  string[]  $args */
+    protected function artisan(InstallCommand $command, array $args): bool
+    {
+        return $command->runArtisan($args);
     }
 
     /** Record which step failed, then return FAILURE for boot() to propagate. */
