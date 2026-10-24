@@ -15,6 +15,7 @@ class HerdEnvironmentTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->fakeFinishingSteps();
         $this->app = sys_get_temp_dir().'/acme-shop-'.uniqid();
         mkdir($this->app);
     }

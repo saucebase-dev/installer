@@ -30,6 +30,8 @@ composer global require saucebase/installer
 
 Make sure Composer's global bin directory is on your `PATH` (`composer global config bin-dir --absolute`).
 
+To upgrade, run `composer global update saucebase/installer`. Running `require` again keeps the version you have. `saucebase new` also updates the installer itself when a newer release exists, then carries on with it.
+
 ## Commands
 
 ### `saucebase new <name>`
@@ -86,7 +88,9 @@ Takes an optional `stack` argument (`vue`/`react`) and the same `--driver`, `--s
 
 **Native driver** — copies `.env.example` → `.env`, generates `APP_KEY`, migrates and seeds, wires the frontend, installs modules, and links storage.
 
-**Herd driver** — the native install, then `herd link` and (unless `--ssl=no`) `herd secure`, so the app is served at `https://<name>.test`. The name comes from a `.test` `--domain`, otherwise the directory.
+**Herd driver** — the native install, then `herd link` and (unless `--ssl=no`) `herd secure`, so the app is served at `https://<name>.test`. The name comes from a `.test` `--domain`, otherwise the directory. With `npm run dev` running, Vite renders pages on the server. With built assets only, Herd doesn't start the renderer, so pages render in the browser until you run `php artisan inertia:start-ssr`.
+
+Every driver ends by building the frontend (`npm install && npm run build`) when npm is available, then checks the app boots before reporting the install complete.
 
 ---
 

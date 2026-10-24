@@ -312,10 +312,15 @@ class StackCommand extends Command
         }
 
         foreach ($this->generatedFiles($framework) as $file) {
+            // A generated file git doesn't track (an entry point, gitignored) has nothing to hide.
+            if (! Process::run(['git', '-C', $this->basePath, 'ls-files', '--error-unmatch', $file])->successful()) {
+                continue;
+            }
+
             $result = Process::run(['git', '-C', $this->basePath, 'update-index', '--skip-worktree', $file]);
 
             if ($result->exitCode() !== 0) {
-                $this->warn("Could not skip-worktree {$file} (not in git index).");
+                $this->warn("Could not skip-worktree {$file}: ".trim($result->errorOutput()));
             }
         }
     }

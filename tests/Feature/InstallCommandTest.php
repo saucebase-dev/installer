@@ -15,6 +15,7 @@ class InstallCommandTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->fakeFinishingSteps();
         Http::preventStrayRequests();
     }
 

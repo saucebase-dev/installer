@@ -26,6 +26,7 @@ services:
             - QUEUE_CONNECTION=${QUEUE_CONNECTION:-redis}
             - MAIL_HOST=${MAIL_HOST:-mailpit}
             - MAIL_PORT=${MAIL_PORT:-1025}
+            - INERTIA_SSR_URL=http://ssr:13714
             - XDEBUG_MODE=${XDEBUG_MODE:-debug}
             - XDEBUG_CONFIG=${XDEBUG_CONFIG:-client_host=host.docker.internal client_port=9003}
         depends_on:
@@ -53,7 +54,7 @@ services:
         image: 'mysql:8.0'
         restart: unless-stopped
         ports:
-            - '${FORWARD_DB_PORT:-3306}:3306'
+            - '127.0.0.1:${FORWARD_DB_PORT:-3306}:3306'
         environment:
             MYSQL_ROOT_PASSWORD: '${DB_PASSWORD}'
             MYSQL_DATABASE: '${DB_DATABASE}'
@@ -85,7 +86,7 @@ services:
         image: 'redis:alpine'
         restart: unless-stopped
         ports:
-            - '${FORWARD_REDIS_PORT:-6379}:6379'
+            - '127.0.0.1:${FORWARD_REDIS_PORT:-6379}:6379'
         volumes:
             - 'saucebase-redis:/data'
         networks:
@@ -100,8 +101,8 @@ services:
         image: 'axllent/mailpit:latest'
         restart: unless-stopped
         ports:
-            - '${FORWARD_MAILPIT_PORT:-1025}:1025'
-            - '${FORWARD_MAILPIT_DASHBOARD_PORT:-8025}:8025'
+            - '127.0.0.1:${FORWARD_MAILPIT_PORT:-1025}:1025'
+            - '127.0.0.1:${FORWARD_MAILPIT_DASHBOARD_PORT:-8025}:8025'
         networks:
             - saucebase
     queue:
@@ -135,6 +136,19 @@ services:
                 condition: service_healthy
             redis:
                 condition: service_healthy
+        restart: unless-stopped
+
+    # The server-side renderer, so pages arrive rendered. Its bundle comes from
+    # `npm run build`; until the first build it restarts until the file exists.
+    ssr:
+        build:
+            context: .
+            dockerfile: ./docker/Dockerfile
+        command: node bootstrap/ssr/app.js
+        volumes:
+            - './:/var/www'
+        networks:
+            - saucebase
         restart: unless-stopped
 
 networks:

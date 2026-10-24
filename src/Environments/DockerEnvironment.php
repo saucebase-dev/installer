@@ -773,7 +773,7 @@ class DockerEnvironment extends Environment
         $mailpit = $this->readEnvValue($command, 'FORWARD_MAILPIT_DASHBOARD_PORT') ?? '8025';
 
         return [
-            'Compile frontend assets: `npm install && npm run dev`',
+            ...($this->frontendBuilt ? [] : ['Compile frontend assets: `npm install && npm run dev`']),
             'Open your app: `'.$appUrl.'`',
             'Email testing (Mailpit): `http://localhost:'.$mailpit.'`',
         ];
@@ -783,6 +783,12 @@ class DockerEnvironment extends Environment
     {
         $command->info('Creating storage link...');
         $this->execInContainer($command, ['php', 'artisan', 'storage:link']);
+    }
+
+    /** Inside the app container: on the host, `.env` points at hostnames only Docker resolves. */
+    protected function artisan(InstallCommand $command, array $args): bool
+    {
+        return $this->execInContainer($command, ['php', 'artisan', ...$args], quiet: true);
     }
 
     protected function clearCaches(InstallCommand $command): void

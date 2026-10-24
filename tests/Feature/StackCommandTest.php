@@ -319,15 +319,14 @@ class StackCommandTest extends TestCase
     // Warnings
     // -------------------------------------------------------------------------
 
-    public function test_dev_mode_warns_for_untracked_entry_points(): void
+    public function test_dev_mode_leaves_untracked_entry_points_alone_without_a_warning(): void
     {
         $this->seedFakeStubs('react');
 
-        // app.tsx is created by the command but not in git — warn for it
+        // app.tsx is generated and gitignored, not tracked: there is nothing to hide from git.
         $this->artisan('stack react --dev')
             ->assertSuccessful()
-            ->expectsOutputToContain('Could not skip-worktree resources/js/app.tsx')
-            ->doesntExpectOutputToContain('resources/js/ssr.tsx');
+            ->doesntExpectOutputToContain('Could not skip-worktree');
     }
 
     public function test_dev_mode_leaves_module_files_out_of_skip_worktree(): void

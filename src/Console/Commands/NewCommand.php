@@ -4,6 +4,7 @@ namespace Saucebase\Installer\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Application;
 use Saucebase\Installer\Console\Commands\Concerns\DisplaysBanner;
@@ -11,6 +12,7 @@ use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\HerdEnvironment;
 use Saucebase\Installer\ModuleRegistry;
 use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Process\Process as SymfonyProcess;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\select;
@@ -355,13 +357,18 @@ class NewCommand extends Command
     }
 
     /**
-     * Warn when a newer installer exists; block when a major version behind.
+     * Create apps with the newest installer: an older one updates itself, then runs this
+     * command again on the new code. Declined or failed, it warns, or stops when a major
+     * version behind.
+     *
+     * @return int|null An exit code to stop with, null to carry on
      */
     protected function checkForUpdates(): ?int
     {
-        $current = ltrim(Application::version(), 'v');
+        $current = $this->currentVersion();
 
-        if ($current === '' || str_contains($current, 'dev')) {
+        // Set for the run after an update: never update twice, whatever Packagist says.
+        if ($current === '' || str_contains($current, 'dev') || getenv('SAUCEBASE_UPDATED') === '1') {
             return null;
         }
 
@@ -371,16 +378,56 @@ class NewCommand extends Command
             return null;
         }
 
+        $wantsUpdate = ! $this->input->isInteractive() || confirm(
+            label: "A newer Saucebase installer is available ({$current} → {$latest}). Update it first?",
+            default: true,
+        );
+
+        if ($wantsUpdate && $this->updateInstaller($latest)) {
+            $this->info("Updated the installer to {$latest}. Continuing with it...");
+
+            return $this->runAgain();
+        }
+
         if ((int) explode('.', $latest)[0] > (int) explode('.', $current)[0]) {
             $this->error("Your installer ({$current}) is a major version behind the latest release ({$latest}) and may not support current Saucebase applications.");
-            $this->line('Update it first: <fg=yellow>composer global update saucebase/installer</>');
+            $this->line("Update it first: <fg=yellow>composer global require saucebase/installer:^{$latest}</>");
 
             return self::FAILURE;
         }
 
-        $this->components->warn("A new version of the Saucebase installer is available ({$current} → {$latest}). Update with: composer global update saucebase/installer");
+        $this->warn("Carrying on with installer {$current}. Update later with: composer global require saucebase/installer:^{$latest}");
 
         return null;
+    }
+
+    protected function currentVersion(): string
+    {
+        return ltrim(Application::version(), 'v');
+    }
+
+    /** Requires the new version itself: `update` keeps the global constraint, so it never crosses a major. */
+    protected function updateInstaller(string $latest): bool
+    {
+        return Process::timeout(300)
+            ->run(['composer', 'global', 'require', "saucebase/installer:^{$latest}", '--with-all-dependencies', '--no-interaction'])
+            ->successful();
+    }
+
+    /** The same command on the updated code, attached to this terminal so its prompts still work. */
+    protected function runAgain(): int
+    {
+        return Process::forever()
+            ->env(['SAUCEBASE_UPDATED' => '1'])
+            ->tty(SymfonyProcess::isTtySupported())
+            ->run([PHP_BINARY, ...$this->rerunArguments()], fn ($_type, $buffer) => $this->output->write($buffer))
+            ->exitCode() ?? self::FAILURE;
+    }
+
+    /** @return string[] The script and arguments this process was started with. */
+    protected function rerunArguments(): array
+    {
+        return $_SERVER['argv'] ?? [];
     }
 
     /**

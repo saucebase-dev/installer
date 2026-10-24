@@ -121,6 +121,7 @@ class NativeEnvironmentTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->fakeFinishingSteps();
         $this->originalCwd = getcwd();
         $this->sandbox = sys_get_temp_dir().'/saucebase-env-test-'.uniqid();
         mkdir($this->sandbox.'/sub/dir', recursive: true);

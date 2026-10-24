@@ -46,6 +46,20 @@ abstract class TestCase extends BaseTestCase
     }
 
     /**
+     * The steps every install ends with, for tests about something else: no npm, so
+     * nothing is built (a test that fakes every tool installed gets a passing build),
+     * and the app boots.
+     */
+    protected function fakeFinishingSteps(): void
+    {
+        Process::fake([
+            "'which' 'npm'*" => Process::result(''),
+            "'npm' *" => Process::result(),
+            "*'about'*" => Process::result(),
+        ]);
+    }
+
+    /**
      * Let commands matching the pattern really run, for tests about a tool's real
      * behaviour in a temporary folder (git applying a patch). Patterns match the
      * quoted command line: `'git' *`.
