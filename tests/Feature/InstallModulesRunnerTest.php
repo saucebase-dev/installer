@@ -59,24 +59,21 @@ class InstallModulesRunnerTest extends TestCase
         $command = $this->command();
 
         $ran = [];
-        $ok = $command->installWith(['saucebase/blog'], function (array $args) use (&$ran): bool {
+        $ok = $command->installWith(['saucebase/blog', 'saucebase/roadmap'], function (array $args) use (&$ran): bool {
             $ran[] = implode(' ', $args);
 
             return true;
         });
 
+        // Core's saucebase:module-install does the rest: require, patches, migrate, seed.
         $this->assertTrue($ok);
-        $this->assertSame([
-            'composer require --no-interaction saucebase/blog',
-            'php artisan modules:sync',
-            'php artisan migrate --force',
-            'php artisan modules:seed --demo',
-        ], $ran);
+        $this->assertSame(['php artisan saucebase:module-install blog roadmap --no-interaction --demo'], $ran);
+        $this->assertStringContainsString('DEMO_PASSWORD=', (string) file_get_contents($this->tmp.'/.env'));
     }
 
-    public function test_a_failed_demo_seed_fails_the_module_install(): void
+    public function test_a_failed_module_install_fails_the_step(): void
     {
-        $ok = $this->command()->installWith(['saucebase/blog'], fn (array $args): bool => ! in_array('--demo', $args, true));
+        $ok = $this->command()->installWith(['saucebase/blog'], fn (array $args): bool => false);
 
         $this->assertFalse($ok);
     }

@@ -20,130 +20,6 @@ class InstallCommandTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
-    // fetchPackageFrameworks
-    // -------------------------------------------------------------------------
-
-    public function test_fetch_package_frameworks_reads_saucebase_extra_field(): void
-    {
-        Http::fake([
-            'raw.githubusercontent.com/saucebase-dev/auth/main/composer.json' => Http::response([
-                'extra' => ['saucebase' => ['frameworks' => ['vue', 'react']]],
-            ]),
-        ]);
-
-        $cmd = new TestableInstallCommand;
-        $this->assertSame(['vue', 'react'], $cmd->exposedFetchPackageFrameworks('saucebase/auth'));
-    }
-
-    public function test_fetch_package_frameworks_defaults_to_vue_when_field_missing(): void
-    {
-        Http::fake([
-            'raw.githubusercontent.com/saucebase-dev/billing/main/composer.json' => Http::response([
-                'extra' => ['laravel' => ['providers' => []]],
-            ]),
-        ]);
-
-        $cmd = new TestableInstallCommand;
-        $this->assertSame(['vue'], $cmd->exposedFetchPackageFrameworks('saucebase/billing'));
-    }
-
-    public function test_fetch_package_frameworks_defaults_to_vue_on_api_failure(): void
-    {
-        Http::fake([
-            'raw.githubusercontent.com/saucebase-dev/no-such-module/main/composer.json' => Http::response([], 500),
-        ]);
-
-        $cmd = new TestableInstallCommand;
-        $this->assertSame(['vue'], $cmd->exposedFetchPackageFrameworks('saucebase/no-such-module'));
-    }
-
-    public function test_fetch_package_frameworks_reads_local_composer_json(): void
-    {
-        // No Http::fake() — Http::preventStrayRequests() will throw if HTTP is called
-        $tmpDir = sys_get_temp_dir().'/sb-install-test-'.uniqid();
-        mkdir($tmpDir.'/test-fixture', 0755, true);
-        file_put_contents($tmpDir.'/test-fixture/composer.json', json_encode([
-            'extra' => ['saucebase' => ['frameworks' => ['vue', 'react']]],
-        ]));
-
-        try {
-            $cmd = new TestableInstallCommand($tmpDir);
-            $this->assertSame(['vue', 'react'], $cmd->exposedFetchPackageFrameworks('saucebase/test-fixture'));
-        } finally {
-            unlink($tmpDir.'/test-fixture/composer.json');
-            rmdir($tmpDir.'/test-fixture');
-            rmdir($tmpDir);
-        }
-    }
-
-    public function test_fetch_package_frameworks_falls_back_to_github_when_no_local_file(): void
-    {
-        Http::fake([
-            'raw.githubusercontent.com/saucebase-dev/billing/main/composer.json' => Http::response([
-                'extra' => ['saucebase' => ['frameworks' => ['vue', 'react']]],
-            ]),
-        ]);
-
-        // No modules/billing/composer.json on disk → must fall back to GitHub
-        $cmd = new TestableInstallCommand;
-        $this->assertSame(['vue', 'react'], $cmd->exposedFetchPackageFrameworks('saucebase/billing'));
-        Http::assertSent(fn ($req) => str_contains($req->url(), 'saucebase-dev/billing'));
-    }
-
-    // -------------------------------------------------------------------------
-    // filterModulesByFramework
-    // -------------------------------------------------------------------------
-
-    public function test_filter_keeps_all_packages_for_vue(): void
-    {
-        $cmd = new TestableInstallCommand;
-        $cmd->frameworkFixtures = [
-            'saucebase/auth' => ['vue', 'react'],
-            'saucebase/billing' => ['vue'],
-            'saucebase/themes' => ['vue'],
-        ];
-
-        $result = $cmd->exposedFilterModulesByFramework(
-            ['saucebase/auth', 'saucebase/billing', 'saucebase/themes'],
-            'vue'
-        );
-
-        $this->assertSame(['saucebase/auth', 'saucebase/billing', 'saucebase/themes'], $result);
-    }
-
-    public function test_filter_removes_vue_only_packages_for_react(): void
-    {
-        $cmd = new TestableInstallCommand;
-        $cmd->frameworkFixtures = [
-            'saucebase/auth' => ['vue', 'react'],
-            'saucebase/billing' => ['vue'],
-            'saucebase/themes' => ['vue'],
-        ];
-
-        $result = $cmd->exposedFilterModulesByFramework(
-            ['saucebase/auth', 'saucebase/billing', 'saucebase/themes'],
-            'react'
-        );
-
-        $this->assertSame(['saucebase/auth'], $result);
-    }
-
-    public function test_filter_defaults_missing_field_to_vue_only(): void
-    {
-        $cmd = new TestableInstallCommand;
-
-        Http::fake([
-            'raw.githubusercontent.com/saucebase-dev/billing/main/composer.json' => Http::response([
-                'extra' => [],
-            ]),
-        ]);
-
-        $result = $cmd->exposedFilterModulesByFramework(['saucebase/billing'], 'react');
-
-        $this->assertSame([], $result, 'Module without frameworks field should not appear for react');
-    }
-
-    // -------------------------------------------------------------------------
     // Deferred stack — saucebase:stack must NOT run during captureStack()
     // -------------------------------------------------------------------------
 
@@ -536,24 +412,16 @@ class InstallCommandTest extends TestCase
     // resolveModuleSelection — --all-modules framework filtering
     // -------------------------------------------------------------------------
 
-    public function test_all_modules_filters_by_selected_stack(): void
+    public function test_all_modules_takes_every_module_whatever_the_stack(): void
     {
+        // A private module's stacks can't be read before it is installed, so none is refused.
         $cmd = new TestableInstallCommand;
-        $cmd->setSelectedStack('vue');
+        $cmd->setSelectedStack('react');
         $cmd->fakeOptions = ['all-modules' => true];
-        $cmd->frameworkFixtures = [
-            'saucebase/auth' => ['vue', 'react'],
-            'saucebase/billing' => ['vue'],
-            'saucebase/react-only' => ['react'],
-        ];
 
-        $result = $cmd->exposedResolveModuleSelection(
-            ['saucebase/auth', 'saucebase/billing', 'saucebase/react-only']
-        );
+        $result = $cmd->exposedResolveModuleSelection(['saucebase/auth', 'saucebase/tenancy']);
 
-        $this->assertContains('saucebase/auth', $result);
-        $this->assertContains('saucebase/billing', $result);
-        $this->assertNotContains('saucebase/react-only', $result, '--all-modules with vue stack must exclude react-only modules');
+        $this->assertSame(['saucebase/auth', 'saucebase/tenancy'], $result);
     }
 
     public function test_all_modules_without_stack_returns_all(): void
@@ -561,10 +429,6 @@ class InstallCommandTest extends TestCase
         $cmd = new TestableInstallCommand;
         $cmd->setSelectedStack(null);
         $cmd->fakeOptions = ['all-modules' => true];
-        $cmd->frameworkFixtures = [
-            'saucebase/auth' => ['vue'],
-            'saucebase/react-only' => ['react'],
-        ];
 
         $result = $cmd->exposedResolveModuleSelection(
             ['saucebase/auth', 'saucebase/react-only']
@@ -615,37 +479,6 @@ class InstallCommandTest extends TestCase
         $result = $cmd->exposedResolveModuleSelection(['saucebase/auth', 'saucebase/billing', 'saucebase/settings']);
 
         $this->assertSame(['saucebase/auth', 'saucebase/billing'], $result);
-    }
-
-    // -------------------------------------------------------------------------
-    // moduleHasSeeder — vendor/ path
-    // -------------------------------------------------------------------------
-
-    public function test_module_has_seeder_checks_vendor_path(): void
-    {
-        $name = 'sb-test-seeder-'.uniqid();
-        $appDir = sys_get_temp_dir().'/sb-install-test-'.uniqid();
-        $vendorSeederDir = $appDir."/vendor/saucebase/{$name}/database/seeders";
-        @mkdir($vendorSeederDir, 0755, true);
-        file_put_contents($vendorSeederDir.'/DatabaseSeeder.php', '<?php');
-
-        try {
-            $cmd = new TestableInstallCommand;
-            $cmd->fakeOptions = ['path' => $appDir];
-            $this->assertFalse(
-                file_exists($appDir."/modules/{$name}/database/seeders/DatabaseSeeder.php"),
-                'modules/ path must not exist for this test to be valid'
-            );
-            $this->assertTrue($cmd->moduleHasSeeder($name), 'moduleHasSeeder() must detect seeder in vendor/saucebase/');
-        } finally {
-            @unlink($vendorSeederDir.'/DatabaseSeeder.php');
-            @rmdir($vendorSeederDir);
-            @rmdir($appDir."/vendor/saucebase/{$name}/database");
-            @rmdir($appDir."/vendor/saucebase/{$name}");
-            @rmdir($appDir.'/vendor/saucebase');
-            @rmdir($appDir.'/vendor');
-            @rmdir($appDir);
-        }
     }
 
     // -------------------------------------------------------------------------

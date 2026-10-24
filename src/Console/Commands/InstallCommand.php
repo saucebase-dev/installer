@@ -11,7 +11,6 @@ use Saucebase\Installer\Console\Commands\Concerns\DisplaysBanner;
 use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\HerdEnvironment;
 use Saucebase\Installer\ModuleRegistry;
-use Symfony\Component\Console\Output\OutputInterface;
 
 use function Laravel\Prompts\callout;
 use function Laravel\Prompts\select;
@@ -300,81 +299,12 @@ class InstallCommand extends Command
             return;
         }
 
-        if ($this->selectedStack) {
-            $available = $this->filterModulesByFramework($available, $this->selectedStack);
-        }
-
-        if (empty($available)) {
-            return;
-        }
-
         $this->selectedModules = $this->registry()->promptSelection($available);
-    }
-
-    /**
-     * Refuse to install a module that ships no frontend for the chosen stack.
-     *
-     * @param  string[]  $packages
-     */
-    public function assertModulesSupportStack(array $packages): bool
-    {
-        if (! $this->selectedStack || empty($packages)) {
-            return true;
-        }
-
-        $incompatible = [];
-
-        foreach ($packages as $package) {
-            $frameworks = $this->fetchPackageFrameworks($package);
-
-            if (! in_array($this->selectedStack, $frameworks, true)) {
-                $incompatible[$package] = $frameworks;
-            }
-        }
-
-        if (empty($incompatible)) {
-            return true;
-        }
-
-        $this->error("These modules do not support the {$this->selectedStack} stack:");
-
-        foreach ($incompatible as $package => $frameworks) {
-            $this->line("  {$package} — supports: ".implode(', ', $frameworks));
-        }
-
-        $this->line('Drop them from --modules, or install with a stack they support.');
-
-        return false;
-    }
-
-    /**
-     * @param  string[]  $packages
-     * @return string[]
-     */
-    public function filterModulesByFramework(array $packages, string $framework): array
-    {
-        return array_values(array_filter(
-            $packages,
-            fn (string $pkg) => in_array($framework, $this->fetchPackageFrameworks($pkg), true)
-        ));
-    }
-
-    /**
-     * @return string[]
-     */
-    protected function fetchPackageFrameworks(string $package): array
-    {
-        return $this->registry()->frameworks($package);
     }
 
     protected function registry(): ModuleRegistry
     {
-        return $this->registry ??= new ModuleRegistry($this->modulesBasePath());
-    }
-
-    protected function modulesBasePath(): string
-    {
-        return $this->path('modules');
+        return $this->registry ??= new ModuleRegistry;
     }
 
     public function install(): int
@@ -672,173 +602,39 @@ class InstallCommand extends Command
     }
 
     /**
-     * Require, patch, migrate and seed the modules. Every driver runs these same steps;
-     * `$run` decides where a command runs (Docker passes one that runs it in the app
-     * container), defaulting to this machine.
+     * Core's `saucebase:module-install` requires, patches, migrates and seeds the
+     * modules. Every driver runs it; `$run` decides where (Docker passes one that runs
+     * it in the app container), defaulting to this machine.
      *
      * @param  string[]  $selected
      * @param  (\Closure(string[] $command, int $timeout): bool)|null  $run
      */
     public function doInstallModules(array $selected, ?\Closure $run = null): bool
     {
-        $run ??= fn (array $command, int $timeout): bool => $command[0] === 'php'
-            ? $this->runArtisan(array_slice($command, 2), $timeout)
-            : $this->runProcess($command, $timeout);
-
-        $this->newLine();
-
-        // Phase 1: require all selected packages in one Composer run
-        $ok = false;
-        $this->components->task('Installing modules', function () use ($selected, $run, &$ok) {
-            return $ok = $run(['composer', 'require', '--no-interaction', ...$selected], 300);
-        });
-
-        if (! $this->composerRequireSucceeded($ok, $selected)) {
-            $this->components->warn('Module installation failed — skipping patches, sync, and migrations.');
-
-            return false;
-        }
-
-        // Phase 2: apply any patches the modules ship for the host app
-        if (! $this->applyModulePatches($selected)) {
-            return false;
-        }
-
-        // Phase 3: sync module configs, then migrate + seed each module individually
-        $this->components->task('Syncing modules', fn () => $run(['php', 'artisan', 'modules:sync'], 30));
-
-        $this->components->task('Running module migrations', fn () => $run(['php', 'artisan', 'migrate', '--force'], 300));
-
-        foreach ($selected as $package) {
-            $name = Str::after($package, '/');
-
-            if (! $this->moduleHasSeeder($name)) {
-                continue;
-            }
-
-            $this->components->task("Seeding {$name}", fn () => $run(['php', 'artisan', 'db:seed', "--module={$name}", '--force'], 60));
-        }
+        $run ??= fn (array $command, int $timeout): bool => $this->runArtisan(array_slice($command, 2), $timeout);
 
         if ($this->option('demo')) {
             $this->demoPassword();
-            $seeded = false;
-            $this->components->task('Loading demo content', function () use ($run, &$seeded) {
-                return $seeded = $run(['php', 'artisan', 'modules:seed', '--demo'], 300);
-            });
-
-            if (! $seeded) {
-                $this->components->warn('Loading demo content failed.');
-
-                return false;
-            }
         }
 
-        return true;
-    }
+        $this->newLine();
 
-    /**
-     * Whether every requested package is actually installed, per composer.lock.
-     *
-     * `composer require` exits non-zero when any post-update-cmd script fails, even
-     * though the packages resolved and installed perfectly — the skeleton's documented
-     * `boost:update` hook does exactly that until Boost is set up. Judging module
-     * installation by the exit code alone turns that into a failed install, so ask
-     * what actually landed instead.
-     *
-     * @param  string[]  $packages
-     */
-    public function modulesAreInstalled(array $packages): bool
-    {
-        $lock = json_decode((string) @file_get_contents($this->path('composer.lock')), true);
+        $ok = false;
+        $this->components->task('Installing modules', function () use ($selected, $run, &$ok) {
+            return $ok = $run([
+                'php', 'artisan', 'saucebase:module-install',
+                ...array_map(fn (string $package) => Str::after($package, '/'), $selected),
+                '--no-interaction',
+                ...($this->option('demo') ? ['--demo'] : []),
+            ], 900);
+        });
 
-        if (! is_array($lock)) {
-            return false;
+        if (! $ok) {
+            $this->components->warn('Installing modules failed. Run it again to see why: php artisan saucebase:module-install '
+                .implode(' ', array_map(fn (string $package) => Str::after($package, '/'), $selected)));
         }
 
-        $installed = array_column(
-            array_merge($lock['packages'] ?? [], $lock['packages-dev'] ?? []),
-            'name',
-        );
-
-        return array_diff(array_map('strtolower', $packages), array_map('strtolower', $installed)) === [];
-    }
-
-    /**
-     * Decide whether a non-zero `composer require` really failed, reporting either way.
-     *
-     * @param  string[]  $packages
-     */
-    public function composerRequireSucceeded(bool $exitedCleanly, array $packages): bool
-    {
-        if ($exitedCleanly) {
-            return true;
-        }
-
-        if (! $this->modulesAreInstalled($packages)) {
-            return false;
-        }
-
-        $this->warn('Composer reported an error, but every module is installed — a post-install script failed.');
-        $this->line('  If that was `boost:update`, run `php artisan boost:install` to configure Boost.');
-
-        return true;
-    }
-
-    public function moduleHasSeeder(string $name): bool
-    {
-        $seederFile = 'database/seeders/DatabaseSeeder.php';
-
-        return file_exists($this->path('modules/'.strtolower($name).'/'.$seederFile))
-            || file_exists($this->path('vendor/saucebase/'.strtolower($name).'/'.$seederFile));
-    }
-
-    /**
-     * Applies the patches each module ships to wire itself into the application.
-     *
-     * A patch already in place is skipped. One that does not apply stops the install:
-     * the module would be installed but not connected, and nothing else would say so.
-     *
-     * @param  string[]  $modules
-     */
-    public function applyModulePatches(array $modules): bool
-    {
-        $conflicts = [];
-
-        foreach ($modules as $package) {
-            $name = Str::after($package, '/');
-
-            foreach (["vendor/saucebase/{$name}/patches", "modules/{$name}/patches"] as $dir) {
-                foreach (glob($this->path($dir).'/*.patch') ?: [] as $patch) {
-                    // Applies in reverse: the change is already there.
-                    if ($this->gitApply($patch, '--reverse', '--check')) {
-                        continue;
-                    }
-
-                    if ($this->gitApply($patch)) {
-                        // Routine wiring, so only with -v. Named by module: several ship a user.patch.
-                        $this->info("Applied patch: {$name}/".basename($patch), OutputInterface::VERBOSITY_VERBOSE);
-
-                        continue;
-                    }
-
-                    $conflicts[] = $dir.'/'.basename($patch);
-                }
-            }
-        }
-
-        foreach ($conflicts as $patch) {
-            $this->error("The patch {$patch} does not apply to this application. "
-                .'Apply its changes by hand, then run the install again.');
-        }
-
-        return $conflicts === [];
-    }
-
-    private function gitApply(string $patch, string ...$flags): bool
-    {
-        return Process::path($this->targetPath())
-            ->run(['git', 'apply', '--whitespace=nowarn', ...$flags, $patch])
-            ->successful();
+        return $ok;
     }
 
     /**
@@ -855,11 +651,9 @@ class InstallCommand extends Command
      */
     protected function resolveModuleSelection(array $available): array
     {
-        // 1. Select all modules (filtered to the chosen stack if one is set)
+        // 1. Select all modules
         if ($this->option('all-modules')) {
-            return $this->selectedStack
-                ? $this->filterModulesByFramework($available, $this->selectedStack)
-                : $available;
+            return $available;
         }
 
         // 2. Modules passed via --modules option

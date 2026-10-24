@@ -134,10 +134,10 @@ class InstallCommandCoreTest extends TestCase
         $this->assertSame('vue', $command->exposedCaptureStack('react'));
     }
 
-    public function test_a_module_that_composer_cannot_install_fails_the_install(): void
+    public function test_a_module_that_cannot_be_installed_fails_the_install(): void
     {
         $command = $this->command();
-        $command->failing = 'composer require';
+        $command->failing = 'php artisan saucebase:module-install';
 
         $this->assertFalse($command->exposedDoInstallModules(['saucebase/auth']));
     }
@@ -165,6 +165,11 @@ class CoreInstallCommand extends TestableInstallCommand
         $this->ran[] = implode(' ', $command);
 
         return $this->failing === null || ! str_starts_with(implode(' ', $command), $this->failing);
+    }
+
+    public function runArtisan(array $args, int $timeout = 120): bool
+    {
+        return $this->runProcess(['php', 'artisan', ...$args], $timeout);
     }
 
     public function argument($key = null): ?string
