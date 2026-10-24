@@ -6,11 +6,6 @@ use Saucebase\Installer\Console\Commands\InstallCommand;
 
 class TestableInstallCommand extends InstallCommand
 {
-    /** @var array<string, string[]> Pre-built framework map (overrides HTTP for filtering tests). */
-    public array $frameworkFixtures = [];
-
-    private ?string $customModulesBasePath;
-
     public function setSelectedStack(?string $stack): void
     {
         $this->selectedStack = $stack;
@@ -20,23 +15,6 @@ class TestableInstallCommand extends InstallCommand
     public function setSelectedModules(array $modules): void
     {
         $this->selectedModules = $modules;
-    }
-
-    public function __construct(?string $modulesBasePath = null)
-    {
-        parent::__construct();
-        $this->customModulesBasePath = $modulesBasePath;
-    }
-
-    public function exposedFetchPackageFrameworks(string $package): array
-    {
-        return $this->fetchPackageFrameworks($package);
-    }
-
-    /** @param  string[]  $packages */
-    public function exposedFilterModulesByFramework(array $packages, string $framework): array
-    {
-        return $this->filterModulesByFramework($packages, $framework);
     }
 
     public function exposedSuccessCalloutContent(array $steps): array
@@ -81,19 +59,5 @@ class TestableInstallCommand extends InstallCommand
     {
         // no-op — prevents composer require from running in unit tests
         return true;
-    }
-
-    protected function fetchPackageFrameworks(string $package): array
-    {
-        if (isset($this->frameworkFixtures[$package])) {
-            return $this->frameworkFixtures[$package];
-        }
-
-        return parent::fetchPackageFrameworks($package);
-    }
-
-    protected function modulesBasePath(): string
-    {
-        return $this->customModulesBasePath ?? parent::modulesBasePath();
     }
 }

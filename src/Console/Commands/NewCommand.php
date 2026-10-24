@@ -216,7 +216,7 @@ class NewCommand extends Command
         }
 
         $registry = $this->registry();
-        $available = $registry->filterByFramework($registry->available(), $stack);
+        $available = $registry->available();
 
         return empty($available) ? [] : $registry->promptSelection($available);
     }

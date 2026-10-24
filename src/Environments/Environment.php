@@ -38,16 +38,6 @@ abstract class Environment
 
         $command->promptForModules();
 
-        // Only an explicit --modules= list reaches the installer unfiltered. The prompt
-        // and --all-modules paths already filter by framework, and checking them here
-        // would cost a needless Packagist round trip.
-        $explicit = $command->optionOrNull('modules');
-
-        if (is_string($explicit) && $explicit !== '' && $explicit !== 'none'
-            && ! $command->assertModulesSupportStack($this->resolveModules($command))) {
-            return $this->fail('Checking module compatibility');
-        }
-
         $result = $this->boot($command);
 
         if ($result === InstallCommand::SUCCESS) {
@@ -162,11 +152,7 @@ abstract class Environment
     protected function resolveModules(InstallCommand $command): array
     {
         if ($command->option('all-modules')) {
-            $available = $command->fetchAvailableModules();
-
-            return $command->getSelectedStack()
-                ? $command->filterModulesByFramework($available, $command->getSelectedStack())
-                : $available;
+            return $command->fetchAvailableModules();
         }
 
         if ($raw = $command->option('modules')) {
