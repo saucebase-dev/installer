@@ -98,6 +98,16 @@ class EnvironmentHelpersTest extends TestCase
         $this->assertStringContainsString('`s3cret`', $steps[0]);
     }
 
+    public function test_with_auth_it_names_the_admin_account_to_sign_in_with(): void
+    {
+        file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
+        mkdir($this->tmp.'/modules/auth', recursive: true);
+
+        $steps = $this->environment()->exposedDemoStep($this->command(demo: true));
+
+        $this->assertSame(['Sign in as `chef@saucebase.dev` (admin) with the password `s3cret`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD'], $steps);
+    }
+
     public function test_without_demo_content_no_password_is_shown(): void
     {
         file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");

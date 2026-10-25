@@ -3,6 +3,7 @@
 namespace Saucebase\Installer\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Console\View\TaskResult;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use Laravel\Prompts\Elements\Element;
@@ -318,7 +319,7 @@ class InstallCommand extends Command
         $this->generateApplicationKey();
 
         $installed = false;
-        $this->components->task('Installing Saucebase', function () use (&$installed) {
+        $this->task('Installing Saucebase', function () use (&$installed) {
             return $installed = $this->installCore();
         });
 
@@ -351,8 +352,8 @@ class InstallCommand extends Command
         $envOk = $this->ensureEnvFile();
         $keyOk = $this->envHasAppKey();
 
-        $this->components->task('Verifying .env', fn () => $envOk);
-        $this->components->task('Verifying app key', fn () => $keyOk);
+        $this->task('Verifying .env', fn () => $envOk);
+        $this->task('Verifying app key', fn () => $keyOk);
 
         if (! $envOk || ! $keyOk) {
             return self::FAILURE;
@@ -540,7 +541,7 @@ class InstallCommand extends Command
 
     protected function generateApplicationKey(): void
     {
-        $this->components->task('Generating application key', function () {
+        $this->task('Generating application key', function () {
             if ($this->envHasAppKey()) {
                 return true;
             }
@@ -556,7 +557,7 @@ class InstallCommand extends Command
         $command = $fresh ? 'migrate:fresh' : 'migrate';
         $ok = false;
 
-        $this->components->task($label, function () use ($command, &$ok) {
+        $this->task($label, function () use ($command, &$ok) {
             return $ok = $this->runArtisan([$command, '--seed', '--force'], 300);
         });
 
@@ -620,9 +621,11 @@ class InstallCommand extends Command
         $this->newLine();
 
         $ok = false;
-        $this->components->task('Installing modules', function () use ($selected, $run, &$ok) {
+        $this->task('Installing modules', function () use ($selected, $run, &$ok) {
             return $ok = $run([
-                'php', 'artisan', 'saucebase:module-install',
+                'php',
+                'artisan',
+                'saucebase:module-install',
                 ...array_map(fn (string $package) => Str::after($package, '/'), $selected),
                 '--no-interaction',
                 ...($this->option('demo') ? ['--demo'] : []),
@@ -677,12 +680,28 @@ class InstallCommand extends Command
 
     protected function createStorageLink(): void
     {
-        $this->components->task('Creating storage link', fn () => $this->runArtisan(['storage:link']));
+        $this->task('Creating storage link', fn () => $this->runArtisan(['storage:link']));
     }
 
     protected function clearCaches(): void
     {
-        $this->components->task('Clearing caches', fn () => $this->runArtisan(['optimize:clear']));
+        $this->task('Clearing caches', fn () => $this->runArtisan(['optimize:clear']));
+    }
+
+    /**
+     * A progress line for one step. Laravel shows FAIL only for its own failure value
+     * and DONE for anything else, `false` included, so a failed step looked done.
+     */
+    protected function task(string $label, callable $step): bool
+    {
+        $ok = false;
+        $this->components->task($label, function () use ($step, &$ok) {
+            return ($ok = (bool) $step())
+                ? TaskResult::Success->value
+                : TaskResult::Failure->value;
+        });
+
+        return $ok;
     }
 
     protected function isCI(): bool
