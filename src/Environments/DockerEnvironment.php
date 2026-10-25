@@ -565,24 +565,43 @@ class DockerEnvironment extends Environment
 
     protected function startDocker(InstallCommand $command): bool
     {
+        return $this->startServices($command) && $this->ensureWebPortPublished($command);
+    }
+
+    /**
+     * Not the queue and SSR: until the app is migrated and built they crash and restart.
+     * startWorkers() starts them once it is.
+     */
+    protected function startServices(InstallCommand $command): bool
+    {
         $command->info('Starting Docker services (this may take a few minutes while pulling images and starting containers)...');
 
         // No `docker compose restart` first: it stop/starts the existing containers, and
         // a container that comes back up can lose its host port bindings. `up` then sees
         // an unchanged config hash, considers it up to date, and never repairs it.
         // `up -d` alone already creates what is missing and recreates what changed.
-        $up = Process::path($command->targetPath())
-            ->timeout(30 * 60) // 30 minutes — first run pulls images + builds layers
-            ->run(['docker', 'compose', 'up', '-d', '--wait', '--build'], fn ($_type, $buffer) => $command->line(trim($buffer)));
-        $command->newLine();
-
-        if (! $up->successful()) {
-            $command->error('Docker failed to start: '.$up->errorOutput());
+        if (! $this->runQuietly($command, ['docker', 'compose', 'up', '-d', '--wait', '--build', 'app', 'nginx', 'mysql', 'redis', 'mailpit'], 30 * 60)) {
+            $command->error('Docker failed to start.');
 
             return false;
         }
 
-        return $this->ensureWebPortPublished($command);
+        return true;
+    }
+
+    /** The SSR container serves the bundle this builds, so the workers start after it. */
+    protected function buildFrontend(InstallCommand $command): bool
+    {
+        $built = parent::buildFrontend($command);
+        $this->startWorkers($command);
+
+        return $built;
+    }
+
+    protected function startWorkers(InstallCommand $command): void
+    {
+        $command->info('Starting the queue and SSR...');
+        $this->runQuietly($command, ['docker', 'compose', 'up', '-d', 'queue', 'ssr'], 300);
     }
 
     /**
@@ -641,12 +660,26 @@ class DockerEnvironment extends Environment
     protected function runComposerInContainer(InstallCommand $command): bool
     {
         $command->info('Installing PHP dependencies...');
-        $result = Process::path($command->targetPath())
-            ->timeout(300)
-            ->run(['docker', 'compose', 'exec', '-T', 'app', 'composer', 'install'], fn ($_type, $buffer) => $command->line(trim($buffer)));
 
-        if (! $result->successful()) {
+        if (! $this->runQuietly($command, ['docker', 'compose', 'exec', '-T', 'app', 'composer', 'install'], 300)) {
             $command->error('composer install failed inside container.');
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /** Prints the output only when the command fails, or as it runs with -v. */
+    protected function runQuietly(InstallCommand $command, array $args, int $timeout): bool
+    {
+        $verbose = (bool) $command->getOutput()?->isVerbose();
+        $result = Process::path($command->targetPath())
+            ->timeout($timeout)
+            ->run($args, $verbose ? fn ($_type, $buffer) => $command->line(trim($buffer)) : null);
+
+        if (! $verbose && ! $result->successful()) {
+            $command->line(trim($result->output().$result->errorOutput()));
         }
 
         return $result->successful();
@@ -776,6 +809,7 @@ class DockerEnvironment extends Environment
             ...($this->frontendBuilt ? [] : ['Compile frontend assets: `npm install && npm run dev`']),
             'Open your app: `'.$appUrl.'`',
             'Email testing (Mailpit): `http://localhost:'.$mailpit.'`',
+            'Run artisan in the container: `docker compose exec app php artisan …`',
         ];
     }
 
