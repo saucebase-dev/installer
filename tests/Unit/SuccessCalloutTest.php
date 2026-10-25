@@ -22,6 +22,6 @@ class SuccessCalloutTest extends TestCase
 
         // A terminal hyperlink's escape codes count towards the callout's width and
         // push its right border out; terminals link a bare URL by themselves.
-        $this->assertSame(['Learn more: https://saucebase-dev.github.io/docs/'], array_values($command->content()));
+        $this->assertSame(['Learn more: https://github.com/saucebase-dev/saucebase'], array_values($command->content()));
     }
 }
