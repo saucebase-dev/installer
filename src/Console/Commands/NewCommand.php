@@ -88,7 +88,8 @@ class NewCommand extends Command
             return self::FAILURE;
         }
 
-        $this->line('  Setup continues below - see the final summary for the real next steps.');
+        // Laravel's installer has just printed its own next steps; ours come at the end.
+        $this->line('  Laravel is ready. Now setting up Saucebase…');
 
         $arguments = $this->installArguments($name, $driver, $stack, $ssl, $modules, $domain, $appName, $demo);
         $result = $this->call('install', $arguments);

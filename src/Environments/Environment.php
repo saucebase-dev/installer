@@ -135,9 +135,14 @@ abstract class Environment
     {
         $password = $command->optionOrNull('demo') ? $this->readEnvValue($command, 'DEMO_PASSWORD') : null;
 
-        return $password === null ? [] : [
-            "Sign in to any demo account with the password `{$password}`. It is DEMO_PASSWORD in .env, used when demo data is seeded",
-        ];
+        if ($password === null) {
+            return [];
+        }
+
+        // Auth's demo data has the one account that sees everything.
+        return [is_dir($command->path('modules/auth'))
+            ? "Sign in as `chef@saucebase.dev` (admin) with the password `{$password}`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD"
+            : "Demo accounts use the password `{$password}`, saved in .env as DEMO_PASSWORD"];
     }
 
     /** Hook: perform driver-specific steps before the module prompt. Return an exit code to abort, null to continue. */

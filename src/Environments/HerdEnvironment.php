@@ -59,7 +59,7 @@ class HerdEnvironment extends NativeEnvironment
         return [
             ...($this->frontendBuilt ? [] : ['Install frontend dependencies: `npm install`']),
             $this->frontendBuilt ? 'For live reload while you edit: `npm run dev`' : 'Start Vite: `npm run dev`',
-            'Open your app: `'.($this->readEnvValue($command, 'APP_URL') ?? '').'`',
+            'Herd already serves your app: `'.($this->readEnvValue($command, 'APP_URL') ?? '').'`',
         ];
     }
 

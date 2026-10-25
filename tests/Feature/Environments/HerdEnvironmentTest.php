@@ -55,6 +55,22 @@ class HerdEnvironmentTest extends TestCase
         $this->assertStringContainsString('APP_HOST=shop.test', (string) file_get_contents($this->app.'/.env'));
     }
 
+    public function test_the_summary_says_herd_already_serves_the_app(): void
+    {
+        $command = $this->command(installs: true, domain: 'shop.test');
+        $env = new class extends HerdEnvironment
+        {
+            /** @return string[] */
+            public function steps(InstallCommand $command): array
+            {
+                return $this->nextSteps($command);
+            }
+        };
+        $env->run($command);
+
+        $this->assertContains('Herd already serves your app: `https://shop.test`', $env->steps($command));
+    }
+
     public function test_without_ssl_it_only_links_and_serves_over_http(): void
     {
         $command = $this->command(installs: true, ssl: 'no');
