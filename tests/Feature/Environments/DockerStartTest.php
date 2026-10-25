@@ -31,6 +31,11 @@ class DockerStartTest extends TestCase
             {
                 $this->printed[] = $string;
             }
+
+            public function warn($string, $verbosity = null): void
+            {
+                $this->printed[] = $string;
+            }
         };
         $this->command->fakeOptions = ['path' => sys_get_temp_dir()];
 
@@ -46,9 +51,9 @@ class DockerStartTest extends TestCase
                 return $this->runComposerInContainer($command);
             }
 
-            public function workers(InstallCommand $command): void
+            public function workers(InstallCommand $command, bool $built): void
             {
-                $this->startWorkers($command);
+                $this->startWorkers($command, $built);
             }
 
             public function steps(InstallCommand $command): array
@@ -90,9 +95,27 @@ class DockerStartTest extends TestCase
     {
         Process::fake();
 
-        $this->docker->workers($this->command);
+        $this->docker->workers($this->command, built: true);
 
         Process::assertRan(fn ($p) => $p->command === ['docker', 'compose', 'up', '-d', 'queue', 'ssr']);
+    }
+
+    public function test_without_a_frontend_build_only_the_queue_starts(): void
+    {
+        Process::fake();
+
+        $this->docker->workers($this->command, built: false);
+
+        Process::assertRan(fn ($p) => $p->command === ['docker', 'compose', 'up', '-d', 'queue']);
+    }
+
+    public function test_a_failed_worker_start_says_how_to_start_them(): void
+    {
+        Process::fake(['*' => Process::result(errorOutput: 'no such service', exitCode: 1)]);
+
+        $this->docker->workers($this->command, built: true);
+
+        $this->assertStringContainsString('Start them with `docker compose up -d queue ssr`', implode("\n", $this->command->printed));
     }
 
     public function test_the_summary_says_artisan_runs_in_the_container(): void

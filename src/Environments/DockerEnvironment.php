@@ -593,15 +593,21 @@ class DockerEnvironment extends Environment
     protected function buildFrontend(InstallCommand $command): bool
     {
         $built = parent::buildFrontend($command);
-        $this->startWorkers($command);
+        $this->startWorkers($command, $built);
 
         return $built;
     }
 
-    protected function startWorkers(InstallCommand $command): void
+    /** Without a build, SSR has no bundle to serve: nextSteps() says to start it after one. */
+    protected function startWorkers(InstallCommand $command, bool $built): void
     {
-        $command->info('Starting the queue and SSR...');
-        $this->runQuietly($command, ['docker', 'compose', 'up', '-d', 'queue', 'ssr'], 300);
+        $services = $built ? ['queue', 'ssr'] : ['queue'];
+        $command->info('Starting '.implode(' and ', $services).'...');
+
+        // Not fatal: the app serves pages without them.
+        if (! $this->runQuietly($command, ['docker', 'compose', 'up', '-d', ...$services], 300)) {
+            $command->warn('They did not start. Start them with `docker compose up -d '.implode(' ', $services).'`.');
+        }
     }
 
     /**
@@ -806,7 +812,7 @@ class DockerEnvironment extends Environment
         $mailpit = $this->readEnvValue($command, 'FORWARD_MAILPIT_DASHBOARD_PORT') ?? '8025';
 
         return [
-            ...($this->frontendBuilt ? [] : ['Compile frontend assets: `npm install && npm run dev`']),
+            ...($this->frontendBuilt ? [] : ['Compile frontend assets: `npm install && npm run dev`', 'After `npm run build`, start SSR: `docker compose up -d ssr`']),
             'Open your app: `'.$appUrl.'`',
             'Email testing (Mailpit): `http://localhost:'.$mailpit.'`',
             'Run artisan in the container: `docker compose exec app php artisan …`',
