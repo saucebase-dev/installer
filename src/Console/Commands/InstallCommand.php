@@ -3,6 +3,7 @@
 namespace Saucebase\Installer\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Console\View\TaskResult;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use Laravel\Prompts\Elements\Element;
@@ -97,7 +98,7 @@ class InstallCommand extends Command
 
     public function path(string $relative = ''): string
     {
-        return $relative === '' ? $this->targetPath() : $this->targetPath().'/'.$relative;
+        return $relative === '' ? $this->targetPath() : $this->targetPath() . '/' . $relative;
     }
 
     /**
@@ -175,7 +176,7 @@ class InstallCommand extends Command
                 label: 'Which hostname will you use for this app?',
                 default: $current,
                 hint: 'Use localhost, or a custom domain such as myapp.test.',
-                validate: fn (string $value) => self::normalizeDomain($value) === null
+                validate: fn(string $value) => self::normalizeDomain($value) === null
                     ? 'Enter a bare hostname, e.g. myapp.test'
                     : null,
             ),
@@ -215,7 +216,7 @@ class InstallCommand extends Command
      */
     protected function warnWhenDomainDoesNotResolve(string $domain): void
     {
-        if ($domain === 'localhost' || gethostbyname($domain.'.') !== $domain.'.') {
+        if ($domain === 'localhost' || gethostbyname($domain . '.') !== $domain . '.') {
             return;
         }
 
@@ -318,7 +319,7 @@ class InstallCommand extends Command
         $this->generateApplicationKey();
 
         $installed = false;
-        $this->components->task('Installing Saucebase', function () use (&$installed) {
+        $this->task('Installing Saucebase', function () use (&$installed) {
             return $installed = $this->installCore();
         });
 
@@ -351,8 +352,8 @@ class InstallCommand extends Command
         $envOk = $this->ensureEnvFile();
         $keyOk = $this->envHasAppKey();
 
-        $this->components->task('Verifying .env', fn () => $envOk);
-        $this->components->task('Verifying app key', fn () => $keyOk);
+        $this->task('Verifying .env', fn() => $envOk);
+        $this->task('Verifying app key', fn() => $keyOk);
 
         if (! $envOk || ! $keyOk) {
             return self::FAILURE;
@@ -451,8 +452,8 @@ class InstallCommand extends Command
 
             foreach ($keys as $key => [$default, $own]) {
                 $value = (string) json_encode($own, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                $pattern = '/^(\s*"'.$key.'":\s*)'.preg_quote('"'.$default.'"', '/').'/m';
-                $replace = fn (array $match): string => $match[1].$value;
+                $pattern = '/^(\s*"' . $key . '":\s*)' . preg_quote('"' . $default . '"', '/') . '/m';
+                $replace = fn(array $match): string => $match[1] . $value;
                 $modified = preg_replace_callback($pattern, $replace, $modified, 1) ?? $modified;
             }
 
@@ -493,7 +494,7 @@ class InstallCommand extends Command
         // (http://localhost:8000, which is what `composer dev` binds); only a custom
         // host needs correcting here.
         if ($native && $host !== 'localhost') {
-            $env = self::setEnvLine($env, 'APP_URL', 'http://'.$host);
+            $env = self::setEnvLine($env, 'APP_URL', 'http://' . $host);
         }
 
         return $env;
@@ -502,7 +503,7 @@ class InstallCommand extends Command
     /** A key's value from raw .env text, or null when the key is absent. */
     public static function readEnvLine(string $env, string $key): ?string
     {
-        return preg_match('/^'.preg_quote($key, '/').'=(.*)$/m', $env, $m) === 1
+        return preg_match('/^' . preg_quote($key, '/') . '=(.*)$/m', $env, $m) === 1
             ? trim(trim($m[1]), "\"'")
             : null;
     }
@@ -510,11 +511,11 @@ class InstallCommand extends Command
     /** Replace a key's value, appending the line when the key is absent. */
     public static function setEnvLine(string $env, string $key, string $value): string
     {
-        $pattern = '/^'.preg_quote($key, '/').'=.*$/m';
+        $pattern = '/^' . preg_quote($key, '/') . '=.*$/m';
 
         return preg_match($pattern, $env)
             ? preg_replace($pattern, "{$key}={$value}", $env)
-            : rtrim($env, "\n")."\n{$key}={$value}\n";
+            : rtrim($env, "\n") . "\n{$key}={$value}\n";
     }
 
     /** The password every demo account gets: the one in .env, or a new random one saved there. */
@@ -540,7 +541,7 @@ class InstallCommand extends Command
 
     protected function generateApplicationKey(): void
     {
-        $this->components->task('Generating application key', function () {
+        $this->task('Generating application key', function () {
             if ($this->envHasAppKey()) {
                 return true;
             }
@@ -556,7 +557,7 @@ class InstallCommand extends Command
         $command = $fresh ? 'migrate:fresh' : 'migrate';
         $ok = false;
 
-        $this->components->task($label, function () use ($command, &$ok) {
+        $this->task($label, function () use ($command, &$ok) {
             return $ok = $this->runArtisan([$command, '--seed', '--force'], 300);
         });
 
@@ -574,8 +575,8 @@ class InstallCommand extends Command
 
         // Fast path: skip Packagist discovery when all requested names are fully qualified
         if ($opt) {
-            $names = array_values(array_filter(array_map(fn ($n) => strtolower(trim($n)), explode(',', $opt))));
-            if ($names && ! array_filter($names, fn ($n) => ! str_contains($n, '/'))) {
+            $names = array_values(array_filter(array_map(fn($n) => strtolower(trim($n)), explode(',', $opt))));
+            if ($names && ! array_filter($names, fn($n) => ! str_contains($n, '/'))) {
                 return $this->doInstallModules($names);
             }
         }
@@ -611,7 +612,7 @@ class InstallCommand extends Command
      */
     public function doInstallModules(array $selected, ?\Closure $run = null): bool
     {
-        $run ??= fn (array $command, int $timeout): bool => $this->runArtisan(array_slice($command, 2), $timeout);
+        $run ??= fn(array $command, int $timeout): bool => $this->runArtisan(array_slice($command, 2), $timeout);
 
         if ($this->option('demo')) {
             $this->demoPassword();
@@ -620,10 +621,12 @@ class InstallCommand extends Command
         $this->newLine();
 
         $ok = false;
-        $this->components->task('Installing modules', function () use ($selected, $run, &$ok) {
+        $this->task('Installing modules', function () use ($selected, $run, &$ok) {
             return $ok = $run([
-                'php', 'artisan', 'saucebase:module-install',
-                ...array_map(fn (string $package) => Str::after($package, '/'), $selected),
+                'php',
+                'artisan',
+                'saucebase:module-install',
+                ...array_map(fn(string $package) => Str::after($package, '/'), $selected),
                 '--no-interaction',
                 ...($this->option('demo') ? ['--demo'] : []),
             ], 900);
@@ -631,7 +634,7 @@ class InstallCommand extends Command
 
         if (! $ok) {
             $this->components->warn('Installing modules failed. Run it again to see why: php artisan saucebase:module-install '
-                .implode(' ', array_map(fn (string $package) => Str::after($package, '/'), $selected)));
+                . implode(' ', array_map(fn(string $package) => Str::after($package, '/'), $selected)));
         }
 
         return $ok;
@@ -659,7 +662,7 @@ class InstallCommand extends Command
         // 2. Modules passed via --modules option
         if ($modules = $this->option('modules')) {
             $requested = collect(explode(',', $modules))
-                ->map(fn ($m) => strtolower(trim($m)))
+                ->map(fn($m) => strtolower(trim($m)))
                 ->filter()
                 ->values();
 
@@ -677,12 +680,28 @@ class InstallCommand extends Command
 
     protected function createStorageLink(): void
     {
-        $this->components->task('Creating storage link', fn () => $this->runArtisan(['storage:link']));
+        $this->task('Creating storage link', fn() => $this->runArtisan(['storage:link']));
     }
 
     protected function clearCaches(): void
     {
-        $this->components->task('Clearing caches', fn () => $this->runArtisan(['optimize:clear']));
+        $this->task('Clearing caches', fn() => $this->runArtisan(['optimize:clear']));
+    }
+
+    /**
+     * A progress line for one step. Laravel shows FAIL only for its own failure value
+     * and DONE for anything else, `false` included, so a failed step looked done.
+     */
+    protected function task(string $label, callable $step): bool
+    {
+        $ok = false;
+        $this->components->task($label, function () use ($step, &$ok) {
+            return ($ok = (bool) $step())
+                ? TaskResult::Success->value
+                : TaskResult::Failure->value;
+        });
+
+        return $ok;
     }
 
     protected function isCI(): bool
@@ -749,7 +768,7 @@ class InstallCommand extends Command
         $command = 'saucebase install';
 
         if ($this->selectedStack) {
-            $command .= ' '.$this->selectedStack;
+            $command .= ' ' . $this->selectedStack;
         }
 
         foreach ($resumeOptions as $option => $value) {
@@ -757,16 +776,16 @@ class InstallCommand extends Command
         }
 
         if ($this->domain !== null) {
-            $command .= ' --domain='.$this->domain;
+            $command .= ' --domain=' . $this->domain;
         }
 
         if ($modules = $this->resumeModules()) {
-            $command .= ' --modules='.$modules;
+            $command .= ' --modules=' . $modules;
         }
 
         foreach (['all-modules', 'dev', 'fresh', 'force', 'demo'] as $flag) {
             if ($this->optionOrNull($flag)) {
-                $command .= ' --'.$flag;
+                $command .= ' --' . $flag;
             }
         }
 
@@ -774,7 +793,7 @@ class InstallCommand extends Command
 
         return $target === rtrim((string) getcwd(), '/')
             ? $command
-            : 'cd '.$this->quotePath($target).' && '.$command;
+            : 'cd ' . $this->quotePath($target) . ' && ' . $command;
     }
 
     /** The --modules value for a resume run, or null when selection was never resolved. */
