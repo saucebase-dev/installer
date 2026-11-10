@@ -31,7 +31,8 @@ class NewCommand extends Command
                             {--ssl= : Enable HTTPS with mkcert for docker (yes/no) — prompted if omitted}
                             {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
                             {--app-name= : What the app is called (defaults to its directory name), prompted if omitted}
-                            {--using= : A Saucebase template to start from, instead of a plain Laravel application}
+                            {--using= : A starter kit to start from, instead of a plain Laravel application}
+                            {--template= : A Saucebase template (vendor/name): installs it, the modules it requires, and its starting data}
                             {--dev : Dev environment}
                             {--demo : Load demo content and demo users}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
@@ -211,6 +212,11 @@ class NewCommand extends Command
      */
     protected function resolveModulesUpfront(?string $stack): ?array
     {
+        // A template requires its own modules.
+        if ($this->option('template')) {
+            return [];
+        }
+
         if ($stack === null || $this->option('all-modules') || $this->option('dev')
             || $this->option('modules') !== null) {
             return null;
@@ -328,6 +334,10 @@ class NewCommand extends Command
 
         if ($demo) {
             $arguments['--demo'] = true;
+        }
+
+        if ($template = $this->option('template')) {
+            $arguments['--template'] = $template;
         }
 
         foreach (['all-modules', 'dev', 'fresh', 'force'] as $flag) {

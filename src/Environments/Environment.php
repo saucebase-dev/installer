@@ -133,7 +133,7 @@ abstract class Environment
     /** @return string[] The demo password, once, when demo content was loaded. */
     protected function demoStep(InstallCommand $command): array
     {
-        $password = $command->optionOrNull('demo') ? $this->readEnvValue($command, 'DEMO_PASSWORD') : null;
+        $password = ($command->optionOrNull('demo') || $command->optionOrNull('template')) ? $this->readEnvValue($command, 'DEMO_PASSWORD') : null;
 
         if ($password === null) {
             return [];

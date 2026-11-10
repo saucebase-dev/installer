@@ -29,6 +29,7 @@ class InstallCommand extends Command
                             {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
                             {--app-name= : What the app is called (defaults to its directory name)}
                             {--demo : Load demo content and demo users}
+                            {--template= : A Saucebase template (vendor/name): installs it, the modules it requires, and its starting data}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--modules= : Comma-separated list of modules to enable (e.g. Auth,Settings), or "none"}
@@ -567,6 +568,11 @@ class InstallCommand extends Command
     /** False when a selected module could not be wired into the application. */
     protected function setupModules(): bool
     {
+        // Its composer.json requires the modules; doInstallModules adds the template itself.
+        if ($this->option('template')) {
+            return $this->doInstallModules([]);
+        }
+
         $opt = $this->option('modules');
 
         if ($opt === 'none') {
@@ -614,21 +620,26 @@ class InstallCommand extends Command
     {
         $run ??= fn (array $command, int $timeout): bool => $this->runArtisan(array_slice($command, 2), $timeout);
 
-        if ($this->option('demo')) {
+        // A template seeds its own state, named after it; otherwise --demo seeds the showcase.
+        $template = $this->optionOrNull('template');
+        $selected = $template ? array_values(array_unique([...$selected, $template])) : $selected;
+        $state = $template ? Str::after($template, '/') : ($this->option('demo') ? 'showcase' : null);
+
+        if ($state !== null) {
             $this->demoPassword();
         }
 
         $this->newLine();
 
         $ok = false;
-        $this->task('Installing modules', function () use ($selected, $run, &$ok) {
+        $this->task('Installing modules', function () use ($selected, $run, $state, &$ok) {
             return $ok = $run([
                 'php',
                 'artisan',
                 'saucebase:module-install',
                 ...array_map(fn (string $package) => Str::after($package, '/'), $selected),
                 '--no-interaction',
-                ...($this->option('demo') ? ['--state=showcase'] : []),
+                ...($state !== null ? ['--state='.$state] : []),
             ], 900);
         });
 
@@ -781,6 +792,10 @@ class InstallCommand extends Command
 
         if ($modules = $this->resumeModules()) {
             $command .= ' --modules='.$modules;
+        }
+
+        if ($template = $this->optionOrNull('template')) {
+            $command .= ' --template='.$template;
         }
 
         foreach (['all-modules', 'dev', 'fresh', 'force', 'demo'] as $flag) {
