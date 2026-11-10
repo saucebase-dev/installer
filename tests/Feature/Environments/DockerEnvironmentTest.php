@@ -231,6 +231,8 @@ class DockerEnvironmentTest extends TestCase
 
     public function test_run_returns_failure_and_skips_composer_when_docker_fails_to_start(): void
     {
+        $this->fakeToolsInstalled();
+
         $spy = (object) ['composerCalled' => false];
 
         $env = new class($spy) extends DockerEnvironment
@@ -266,6 +268,8 @@ class DockerEnvironmentTest extends TestCase
 
     public function test_run_returns_failure_when_composer_install_fails_in_container(): void
     {
+        $this->fakeToolsInstalled();
+
         $spy = (object) ['installCalled' => false];
 
         $env = new class($spy) extends DockerEnvironment
@@ -319,7 +323,7 @@ class DockerEnvironmentTest extends TestCase
             {
                 public function __construct(private object $spy) {}
 
-                protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
+                protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
                 {
                     $this->spy->execCalled = true;
 
@@ -355,7 +359,7 @@ class DockerEnvironmentTest extends TestCase
             {
                 public function __construct(private object $spy) {}
 
-                protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
+                protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
                 {
                     $this->spy->execCalled = true;
 
@@ -395,6 +399,20 @@ class DockerEnvironmentTest extends TestCase
             protected function generateSsl(InstallCommand $command): void {}
 
             protected function setDockerEnvDefaults(InstallCommand $command): void {}
+
+            // Stubbed so the test never queries the real Docker for ports or runs
+            // `composer require` in a container: only the module step should fail.
+            protected function checkPorts(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function configureNginx(InstallCommand $command): void {}
+
+            protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
+            {
+                return true;
+            }
 
             protected function startDocker(InstallCommand $command): bool
             {
@@ -439,12 +457,81 @@ class DockerEnvironmentTest extends TestCase
             public function promptForModules(): void {}
 
             public function displaySuccess(array $steps = []): void {}
-
-            public function rewriteCrossModuleImports(): void {}
         };
 
         $result = $env->run($command);
         $this->assertSame(Command::FAILURE, $result);
+    }
+
+    public function test_boot_installs_saucebase_in_the_container_and_fails_when_it_cannot(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            /** @var string[] */
+            public array $ran = [];
+
+            protected function beforePrompts(InstallCommand $command): ?int
+            {
+                return null;
+            }
+
+            protected function publishStubs(InstallCommand $command): void {}
+
+            protected function generateSsl(InstallCommand $command): void {}
+
+            protected function setDockerEnvDefaults(InstallCommand $command): void {}
+
+            protected function checkPorts(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function configureNginx(InstallCommand $command): void {}
+
+            protected function startDocker(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function runComposerInContainer(InstallCommand $command): bool
+            {
+                return true;
+            }
+
+            protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
+            {
+                $this->ran[] = implode(' ', $args);
+
+                return ! str_contains(implode(' ', $args), 'saucebase:install');
+            }
+        };
+
+        $command = new class extends FakeInstallCommand
+        {
+            public function __construct()
+            {
+                parent::__construct('vue', [], ['path' => sys_get_temp_dir()]);
+            }
+
+            public function ensureEnvFile(): bool
+            {
+                return true;
+            }
+
+            public function applyAppIdentity(bool $native = true): void {}
+
+            public function promptForModules(): void {}
+
+            public function displayFailure(?string $step = null, array $resumeOptions = []): void {}
+        };
+
+        $this->assertSame(Command::FAILURE, $env->run($command));
+        $this->assertSame([
+            'composer config allow-plugins.saucebase/module-installer true',
+            'composer require saucebase/core --no-interaction',
+            'composer require --dev saucebase/laravel-playwright --no-interaction',
+            'php artisan saucebase:install vue --force --no-interaction',
+        ], $env->ran);
     }
 
     // -------------------------------------------------------------------------
@@ -577,6 +664,24 @@ class DockerEnvironmentTest extends TestCase
 
         // 8025 has no Docker owner, so stopping "other" would not unblock the install.
         $this->assertSame([], $env->exposedStoppableTargets(['a' => 6379, 'b' => 8025], $env->fakeOwners));
+    }
+
+    // -------------------------------------------------------------------------
+    // applyDockerTaskPrefix
+    // -------------------------------------------------------------------------
+
+    public function test_sets_the_empty_taskfile_prefix_to_the_app_container(): void
+    {
+        $result = $this->applyTaskPrefix("vars:\n  # Prefix\n  APP: ''\n\ntasks:\n");
+
+        $this->assertSame("vars:\n  # Prefix\n  APP: 'docker compose exec app'\n\ntasks:\n", $result);
+    }
+
+    public function test_keeps_a_taskfile_prefix_already_set(): void
+    {
+        $taskfile = "vars:\n  APP: 'sail'\n";
+
+        $this->assertSame($taskfile, $this->applyTaskPrefix($taskfile));
     }
 
     // -------------------------------------------------------------------------
@@ -1035,9 +1140,25 @@ class DockerEnvironmentTest extends TestCase
     {
         $hosts = $this->exposed()->exposedCertificateHosts('myapp.test');
 
-        $this->assertContains('myapp.test', $hosts);
-        $this->assertContains('*.myapp.test', $hosts);
-        $this->assertContains('localhost', $hosts);
+        // The loopback addresses too, so https://127.0.0.1 is trusted as well.
+        $this->assertSame(['myapp.test', '*.myapp.test', 'localhost', '*.localhost', '127.0.0.1', '::1'], $hosts);
+    }
+
+    public function test_ports_come_from_env_and_fall_back_to_defaults_when_not_numeric(): void
+    {
+        $dir = sys_get_temp_dir().'/sb-ports-'.uniqid();
+        mkdir($dir);
+        file_put_contents($dir.'/.env', "APP_PORT=8080\nAPP_HTTPS_PORT=nope\n");
+
+        try {
+            $ports = $this->exposed()->exposedResolvePorts(new FakeInstallCommand(null, [], ['path' => $dir]));
+        } finally {
+            exec('rm -rf '.escapeshellarg($dir));
+        }
+
+        $this->assertSame(8080, $ports['APP_PORT']);
+        $this->assertSame(443, $ports['APP_HTTPS_PORT']);
+        $this->assertSame(3306, $ports['FORWARD_DB_PORT']);
     }
 
     public function test_certificate_hosts_do_not_repeat_localhost(): void
@@ -1270,6 +1391,12 @@ class DockerEnvironmentTest extends TestCase
                 return $this->applyNginxSettings($conf, $host, $http, $https);
             }
 
+            /** @return array<string, int> */
+            public function exposedResolvePorts(InstallCommand $command): array
+            {
+                return $this->resolvePorts($command);
+            }
+
             /** @return string[] */
             public function exposedCertificateHosts(string $host): array
             {
@@ -1314,6 +1441,19 @@ class DockerEnvironmentTest extends TestCase
         };
     }
 
+    private function applyTaskPrefix(string $taskfile): string
+    {
+        $exposed = new class extends DockerEnvironment
+        {
+            public function applyDockerTaskPrefix(string $taskfile): string
+            {
+                return parent::applyDockerTaskPrefix($taskfile);
+            }
+        };
+
+        return $exposed->applyDockerTaskPrefix($taskfile);
+    }
+
     private function applyDefaults(string $env, bool $ssl = true, array $ports = []): string
     {
         $exposed = new class extends DockerEnvironment
@@ -1347,6 +1487,42 @@ class DockerEnvironmentTest extends TestCase
         };
 
         return $exposed->resolveModules($command);
+    }
+
+    // -------------------------------------------------------------------------
+    // publishStubs
+    // -------------------------------------------------------------------------
+
+    public function test_publish_stubs_delegates_non_interactively_so_existing_files_are_never_prompted(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            public function publish(InstallCommand $command): void
+            {
+                $this->ssl = false;
+                $this->publishStubs($command);
+            }
+        };
+
+        $command = new class(null, [], ['path' => '/tmp/app']) extends FakeInstallCommand
+        {
+            /** @var array<string, mixed> */
+            public array $calledWith = [];
+
+            public function call($command, array $arguments = [])
+            {
+                $this->calledWith = ['command' => $command] + $arguments;
+
+                return 0;
+            }
+        };
+
+        $env->publish($command);
+
+        $this->assertSame('docker:publish', $command->calledWith['command']);
+        $this->assertSame('/tmp/app', $command->calledWith['--path']);
+        $this->assertSame('no', $command->calledWith['--ssl']);
+        $this->assertTrue($command->calledWith['--no-interaction'], 'install must never prompt to overwrite Docker files');
     }
 }
 

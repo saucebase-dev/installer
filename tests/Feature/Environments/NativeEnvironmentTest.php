@@ -121,6 +121,7 @@ class NativeEnvironmentTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->fakeFinishingSteps();
         $this->originalCwd = getcwd();
         $this->sandbox = sys_get_temp_dir().'/saucebase-env-test-'.uniqid();
         mkdir($this->sandbox.'/sub/dir', recursive: true);
@@ -169,7 +170,7 @@ class NativeEnvironmentTest extends TestCase
         };
 
         $this->assertSame(
-            ['cd `'.realpath($this->sandbox.'/sub/dir').'`'],
+            ['cd sub/dir'],
             $this->envExposingCdStep()->exposedCdStep($command),
         );
     }
@@ -190,11 +191,26 @@ class NativeEnvironmentTest extends TestCase
         };
 
         $this->assertSame(
-            ['cd `'.realpath($elsewhere).'`'],
+            ['cd '.realpath($elsewhere)],
             $this->envExposingCdStep()->exposedCdStep($command),
         );
 
         $this->removeDirectory($elsewhere);
+    }
+
+    public function test_cd_step_quotes_a_path_the_shell_would_split(): void
+    {
+        mkdir($this->sandbox.'/my app');
+
+        $command = new class extends InstallCommand
+        {
+            public function targetPath(): string
+            {
+                return './my app';
+            }
+        };
+
+        $this->assertSame(["cd 'my app'"], $this->envExposingCdStep()->exposedCdStep($command));
     }
 
     private function removeDirectory(string $dir): void

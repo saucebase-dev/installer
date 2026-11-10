@@ -2,9 +2,8 @@
 
 namespace Saucebase\Installer\Environments;
 
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Process;
 use Saucebase\Installer\Console\Commands\InstallCommand;
-use Symfony\Component\Process\Process;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\select;
@@ -105,6 +104,15 @@ class DockerEnvironment extends Environment
             return $this->fail('Installing PHP dependencies');
         }
 
+        foreach ($command->coreInstallSteps() as $step) {
+            if (! $this->execInContainer($command, $step, timeout: 600)) {
+                return $this->fail('Installing Saucebase');
+            }
+        }
+
+        $this->setTaskfilePrefix($command);
+        $command->nameProject();
+
         if (! $this->generateAppKey($command)) {
             return $this->fail('Generating application key');
         }
@@ -123,7 +131,6 @@ class DockerEnvironment extends Environment
             return $this->fail('Installing modules');
         }
 
-        $command->rewriteCrossModuleImports();
         $this->createStorageLink($command);
         $this->clearCaches($command);
 
@@ -149,37 +156,13 @@ class DockerEnvironment extends Environment
     {
         $command->info('Publishing Docker stubs...');
 
-        $stubs = dirname(__DIR__, 2).'/stubs/docker';
-
-        foreach ([
-            'docker-compose.yml',
-            'docker/Dockerfile',
-            'docker/nginx.conf',
-            'docker/php.ini',
-            'docker/xdebug.ini',
-        ] as $file) {
-            $destination = $command->path($file);
-
-            if (file_exists($destination)) {
-                continue;
-            }
-
-            @mkdir(dirname($destination), 0755, true);
-
-            if (! copy($stubs.'/'.$file, $destination)) {
-                $command->warn("Failed to publish {$file}.");
-            }
-        }
-
-        if (! $this->ssl) {
-            $copied = copy(
-                $stubs.'/docker/nginx-no-ssl.conf',
-                $command->path('docker/nginx.conf'),
-            );
-            if (! $copied) {
-                $command->warn('Failed to write nginx.conf (no-SSL). Check that Docker stubs were published first.');
-            }
-        }
+        // Forced non-interactive so existing files are kept silently, as the
+        // install flow has always done — never prompt to overwrite here.
+        $command->call('docker:publish', [
+            '--path' => $command->path(),
+            '--ssl' => $this->ssl ? 'yes' : 'no',
+            '--no-interaction' => true,
+        ]);
     }
 
     protected function generateSsl(InstallCommand $command): void
@@ -200,17 +183,16 @@ class DockerEnvironment extends Environment
         $command->info('Generating SSL certificates...');
         @mkdir(dirname($certFile), 0755, true);
 
-        (new Process(['mkcert', '-install']))->run();
+        Process::run(['mkcert', '-install']);
 
-        $cert = new Process([
+        $cert = Process::run([
             'mkcert',
             '-key-file', $keyFile,
             '-cert-file', $certFile,
             ...$this->certificateHosts($host),
         ]);
-        $cert->run();
 
-        if (! $cert->isSuccessful()) {
+        if (! $cert->successful()) {
             $command->warn('SSL generation failed. Run mkcert manually if HTTPS is needed.');
         }
     }
@@ -231,16 +213,14 @@ class DockerEnvironment extends Environment
      */
     protected function certCoversHost(string $certFile, string $host): bool
     {
-        $process = new Process(['openssl', 'x509', '-in', $certFile, '-noout', '-text']);
-        $process->setTimeout(15);
-        $process->run();
+        $result = Process::timeout(15)->run(['openssl', 'x509', '-in', $certFile, '-noout', '-text']);
 
-        if (! $process->isSuccessful()) {
+        if (! $result->successful()) {
             return false;
         }
 
         // Anchor the end so "DNS:myapp.test" does not satisfy a request for "app.test".
-        return preg_match('/DNS:'.preg_quote($host, '/').'(?=[,\s]|$)/', $process->getOutput()) === 1;
+        return preg_match('/DNS:'.preg_quote($host, '/').'(?=[,\s]|$)/', $result->output()) === 1;
     }
 
     /**
@@ -398,27 +378,25 @@ class DockerEnvironment extends Environment
     /** @return string[] Names of the containers belonging to this app's own Compose project. */
     protected function ownContainers(InstallCommand $command): array
     {
-        $process = new Process(['docker', 'compose', 'ps', '--format', '{{.Name}}'], $command->targetPath());
-        $process->setTimeout(15);
-        $process->run();
+        $result = Process::path($command->targetPath())
+            ->timeout(15)
+            ->run(['docker', 'compose', 'ps', '--format', '{{.Name}}']);
 
-        if (! $process->isSuccessful()) {
+        if (! $result->successful()) {
             return [];
         }
 
-        return array_values(array_filter(array_map('trim', preg_split('/\R/', $process->getOutput()) ?: [])));
+        return array_values(array_filter(array_map('trim', preg_split('/\R/', $result->output()) ?: [])));
     }
 
     /** @return array<int, array{container: string, project: string|null}> Host port => owner. */
     protected function dockerPortOwners(): array
     {
-        $process = new Process([
+        $result = Process::timeout(15)->run([
             'docker', 'ps', '--format', '{{.Ports}}|{{.Names}}|{{.Label "com.docker.compose.project"}}',
         ]);
-        $process->setTimeout(15);
-        $process->run();
 
-        return $process->isSuccessful() ? $this->parseDockerPortOwners($process->getOutput()) : [];
+        return $result->successful() ? $this->parseDockerPortOwners($result->output()) : [];
     }
 
     /** @return array<int, array{container: string, project: string|null}> */
@@ -516,14 +494,12 @@ class DockerEnvironment extends Environment
         foreach ($targets as $target) {
             $command->info('Stopping '.($target['project'] ?? $target['container']).'...');
 
-            $process = $target['project'] !== null
-                ? new Process(['docker', 'compose', '-p', $target['project'], 'stop'])
-                : new Process(['docker', 'stop', $target['container']]);
-            $process->setTimeout(120);
-            $process->run();
+            $result = Process::timeout(120)->run($target['project'] !== null
+                ? ['docker', 'compose', '-p', $target['project'], 'stop']
+                : ['docker', 'stop', $target['container']]);
 
-            if (! $process->isSuccessful()) {
-                $command->error('Failed to stop '.($target['project'] ?? $target['container']).': '.$process->getErrorOutput());
+            if (! $result->successful()) {
+                $command->error('Failed to stop '.($target['project'] ?? $target['container']).': '.$result->errorOutput());
             }
         }
 
@@ -589,24 +565,49 @@ class DockerEnvironment extends Environment
 
     protected function startDocker(InstallCommand $command): bool
     {
+        return $this->startServices($command) && $this->ensureWebPortPublished($command);
+    }
+
+    /**
+     * Not the queue and SSR: until the app is migrated and built they crash and restart.
+     * startWorkers() starts them once it is.
+     */
+    protected function startServices(InstallCommand $command): bool
+    {
         $command->info('Starting Docker services (this may take a few minutes while pulling images and starting containers)...');
 
         // No `docker compose restart` first: it stop/starts the existing containers, and
         // a container that comes back up can lose its host port bindings. `up` then sees
         // an unchanged config hash, considers it up to date, and never repairs it.
         // `up -d` alone already creates what is missing and recreates what changed.
-        $up = new Process(['docker', 'compose', 'up', '-d', '--wait', '--build'], $command->targetPath());
-        $up->setTimeout(30 * 60); // 30 minutes — first run pulls images + builds layers
-        $up->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
-        $command->newLine();
-
-        if (! $up->isSuccessful()) {
-            $command->error('Docker failed to start: '.$up->getErrorOutput());
+        if (! $this->runQuietly($command, ['docker', 'compose', 'up', '-d', '--wait', '--build', 'app', 'nginx', 'mysql', 'redis', 'mailpit'], 30 * 60)) {
+            $command->error('Docker failed to start.');
 
             return false;
         }
 
-        return $this->ensureWebPortPublished($command);
+        return true;
+    }
+
+    /** The SSR container serves the bundle this builds, so the workers start after it. */
+    protected function buildFrontend(InstallCommand $command): bool
+    {
+        $built = parent::buildFrontend($command);
+        $this->startWorkers($command, $built);
+
+        return $built;
+    }
+
+    /** Without a build, SSR has no bundle to serve: nextSteps() says to start it after one. */
+    protected function startWorkers(InstallCommand $command, bool $built): void
+    {
+        $services = $built ? ['queue', 'ssr'] : ['queue'];
+        $command->info('Starting '.implode(' and ', $services).'...');
+
+        // Not fatal: the app serves pages without them.
+        if (! $this->runQuietly($command, ['docker', 'compose', 'up', '-d', ...$services], 300)) {
+            $command->warn('They did not start. Start them with `docker compose up -d '.implode(' ', $services).'`.');
+        }
     }
 
     /**
@@ -657,35 +658,54 @@ class DockerEnvironment extends Environment
     {
         // --force-recreate is the only thing that fixes an already-running container
         // with dropped bindings; a plain `up` leaves it alone.
-        $process = new Process(
-            ['docker', 'compose', 'up', '-d', '--force-recreate', 'nginx'],
-            $command->targetPath(),
-        );
-        $process->setTimeout(120);
-        $process->run();
+        Process::path($command->targetPath())
+            ->timeout(120)
+            ->run(['docker', 'compose', 'up', '-d', '--force-recreate', 'nginx']);
     }
 
     protected function runComposerInContainer(InstallCommand $command): bool
     {
         $command->info('Installing PHP dependencies...');
-        $process = new Process(['docker', 'compose', 'exec', '-T', 'app', 'composer', 'install'], $command->targetPath());
-        $process->setTimeout(300);
-        $process->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
 
-        if (! $process->isSuccessful()) {
+        if (! $this->runQuietly($command, ['docker', 'compose', 'exec', '-T', 'app', 'composer', 'install'], 300)) {
             $command->error('composer install failed inside container.');
+
+            return false;
         }
 
-        return $process->isSuccessful();
+        return true;
     }
 
-    protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120): bool
+    /** Prints the output only when the command fails, or as it runs with -v. */
+    protected function runQuietly(InstallCommand $command, array $args, int $timeout): bool
     {
-        $process = new Process(array_merge(['docker', 'compose', 'exec', '-T', 'app'], $args), $command->targetPath());
-        $process->setTimeout($timeout);
-        $process->run(fn ($_type, $buffer) => $command->line(trim($buffer)));
+        $verbose = (bool) $command->getOutput()?->isVerbose();
+        $result = Process::path($command->targetPath())
+            ->timeout($timeout)
+            ->run($args, $verbose ? fn ($_type, $buffer) => $command->line(trim($buffer)) : null);
 
-        return $process->isSuccessful();
+        if (! $verbose && ! $result->successful()) {
+            $command->line(trim($result->output().$result->errorOutput()));
+        }
+
+        return $result->successful();
+    }
+
+    /** `$quiet` holds the output back unless the command fails, so a task line stays clean. */
+    protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
+    {
+        $result = Process::path($command->targetPath())
+            ->timeout($timeout)
+            ->run(
+                array_merge(['docker', 'compose', 'exec', '-T', 'app'], $args),
+                $quiet ? null : fn ($_type, $buffer) => $command->line(trim($buffer)),
+            );
+
+        if ($quiet && ! $result->successful()) {
+            $command->line(trim($result->output().$result->errorOutput()));
+        }
+
+        return $result->successful();
     }
 
     protected function generateAppKey(InstallCommand $command): bool
@@ -720,14 +740,11 @@ class DockerEnvironment extends Environment
             return true;
         }
 
-        $process = new Process(
-            ['docker', 'compose', 'exec', '-T', 'mysql', 'mysql', '-uroot', '-p'.$password, '-e', $sql],
-            $command->targetPath(),
-        );
-        $process->setTimeout(60);
-        $process->run();
+        $result = Process::path($command->targetPath())
+            ->timeout(60)
+            ->run(['docker', 'compose', 'exec', '-T', 'mysql', 'mysql', '-uroot', '-p'.$password, '-e', $sql]);
 
-        if ($process->isSuccessful()) {
+        if ($result->successful()) {
             return true;
         }
 
@@ -774,14 +791,8 @@ class DockerEnvironment extends Environment
 
     protected function runStack(InstallCommand $command): void
     {
-        if (! $stack = $command->getSelectedStack()) {
-            return;
-        }
-
-        $command->info("Setting up {$stack} stack...");
-
         // File operations on the host — the app directory is volume-mounted,
-        // and the stack command no longer exists inside the container.
+        // and the stack command does not exist inside the container.
         $command->runStack();
     }
 
@@ -789,39 +800,10 @@ class DockerEnvironment extends Environment
     {
         $modules = $this->resolveModules($command);
 
-        if (empty($modules)) {
-            return true;
-        }
-
-        $command->info('Installing modules...');
-
-        $ok = $this->execInContainer(
-            $command,
-            ['composer', 'require', ...$modules, '--no-interaction'],
-            timeout: 300,
+        return $modules === [] || $command->doInstallModules(
+            $modules,
+            fn (array $args, int $timeout): bool => $this->execInContainer($command, $args, $timeout, quiet: true),
         );
-
-        if (! $command->composerRequireSucceeded($ok, $modules)) {
-            $command->warn('Failed to install one or more modules — skipping patches, sync, and migrations.');
-
-            return false;
-        }
-
-        $command->applyModulePatches($modules);
-        $this->execInContainer($command, ['php', 'artisan', 'modules:sync']);
-        $this->execInContainer($command, ['php', 'artisan', 'migrate', '--force'], timeout: 300);
-
-        foreach ($modules as $package) {
-            $name = Str::after($package, '/');
-
-            if (! $command->moduleHasSeeder($name)) {
-                continue;
-            }
-
-            $this->execInContainer($command, ['php', 'artisan', 'db:seed', "--module={$name}", '--force']);
-        }
-
-        return true;
     }
 
     protected function nextSteps(InstallCommand $command): array
@@ -830,9 +812,10 @@ class DockerEnvironment extends Environment
         $mailpit = $this->readEnvValue($command, 'FORWARD_MAILPIT_DASHBOARD_PORT') ?? '8025';
 
         return [
-            'Compile frontend assets: `npm install && npm run dev`',
+            ...($this->frontendBuilt ? [] : ['Compile frontend assets: `npm install && npm run dev`', 'After `npm run build`, start SSR: `docker compose up -d ssr`']),
             'Open your app: `'.$appUrl.'`',
             'Email testing (Mailpit): `http://localhost:'.$mailpit.'`',
+            'Run artisan in the container: `docker compose exec app php artisan …`',
         ];
     }
 
@@ -840,6 +823,12 @@ class DockerEnvironment extends Environment
     {
         $command->info('Creating storage link...');
         $this->execInContainer($command, ['php', 'artisan', 'storage:link']);
+    }
+
+    /** Inside the app container: on the host, `.env` points at hostnames only Docker resolves. */
+    protected function artisan(InstallCommand $command, array $args): bool
+    {
+        return $this->execInContainer($command, ['php', 'artisan', ...$args], quiet: true);
     }
 
     protected function clearCaches(InstallCommand $command): void
@@ -863,6 +852,28 @@ class DockerEnvironment extends Environment
             file_put_contents($path, $modified);
             $command->info('Docker settings written to .env.');
         }
+    }
+
+    /** Core's Taskfile stub ships an empty APP prefix; under Docker, tasks run in the app container. */
+    protected function setTaskfilePrefix(InstallCommand $command): void
+    {
+        $path = $command->path('Taskfile.yml');
+
+        if (! is_file($path)) {
+            return;
+        }
+
+        $original = (string) file_get_contents($path);
+        $modified = $this->applyDockerTaskPrefix($original);
+
+        if ($modified !== $original) {
+            file_put_contents($path, $modified);
+        }
+    }
+
+    protected function applyDockerTaskPrefix(string $taskfile): string
+    {
+        return preg_replace("/^(\s*APP:\s*)''/m", "$1'docker compose exec app'", $taskfile, 1) ?? $taskfile;
     }
 
     /** @param  array<string, int>  $ports  Env key => port, forced over any existing value. */
@@ -947,6 +958,6 @@ class DockerEnvironment extends Environment
 
     protected function dockerComposeAvailable(): bool
     {
-        return (bool) shell_exec('docker compose version 2>/dev/null');
+        return trim(Process::run(['docker', 'compose', 'version'])->output()) !== '';
     }
 }

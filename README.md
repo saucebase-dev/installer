@@ -1,4 +1,4 @@
-# saucebase/installer
+# Saucebase Installer
 
 ![Tests](https://github.com/saucebase-dev/installer/actions/workflows/php.yml/badge.svg)
 ![PHP](https://img.shields.io/badge/PHP-%5E8.4-777BB4?logo=php&logoColor=white)
@@ -18,6 +18,7 @@ saucebase new my-app
 - PHP ^8.4 and Composer (the only universal prerequisites — same as Laravel itself)
 - **Docker driver:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine with the Compose plugin; [mkcert](https://github.com/FiloSottile/mkcert) only if you enable SSL
 - **Native driver:** a local PHP capable of running the app; the CLI points you to [php.new](https://php.new) if anything is missing
+- **Herd driver:** [Laravel Herd](https://herd.laravel.com); offered in the prompt only when the `herd` command is found
 
 The CLI **checks and instructs** for prerequisites — it never installs them for you.
 
@@ -28,6 +29,8 @@ composer global require saucebase/installer
 ```
 
 Make sure Composer's global bin directory is on your `PATH` (`composer global config bin-dir --absolute`).
+
+To upgrade, run `composer global update saucebase/installer`. Running `require` again keeps the version you have. `saucebase new` also updates the installer itself when a newer release exists, then carries on with it.
 
 ## Commands
 
@@ -45,7 +48,7 @@ Runs a self-update check, then collects every choice upfront (driver → SSL if 
 
 | Option | Description |
 |--------|-------------|
-| `--driver=docker\|native` | Environment driver (skips the prompt) |
+| `--driver=docker\|native\|herd` | Environment driver (skips the prompt) |
 | `--stack=vue\|react` | Frontend stack (skips the prompt) |
 | `--ssl=yes\|no` | Enable HTTPS via mkcert, Docker only (skips the prompt) |
 | `--modules=auth,billing` | Install specific modules by name, or `none` to skip modules |
@@ -85,32 +88,51 @@ Takes an optional `stack` argument (`vue`/`react`) and the same `--driver`, `--s
 
 **Native driver** — copies `.env.example` → `.env`, generates `APP_KEY`, migrates and seeds, wires the frontend, installs modules, and links storage.
 
+**Herd driver** — the native install, then `herd link` and (unless `--ssl=no`) `herd secure`, so the app is served at `https://<name>.test`. The name comes from a `.test` `--domain`, otherwise the directory. With `npm run dev` running, Vite renders pages on the server. With built assets only, Herd doesn't start the renderer, so pages render in the browser until you run `php artisan inertia:start-ssr`.
+
+Every driver ends by building the frontend (`npm install && npm run build`) when npm is available, then checks the app boots before reporting the install complete.
+
 ---
 
 ### `saucebase stack <vue|react>`
 
-Selects or switches the frontend framework for an app.
+Selects the frontend framework of a **contributor checkout**, one with `saucebase/core` in `vendor/`. An installed app has its framework chosen by `saucebase new` or `saucebase install` and does not use this command.
 
 ```bash
-saucebase stack vue
-saucebase stack react
+saucebase stack vue --dev
+saucebase stack react --dev
 ```
 
-Copies the framework-specific source, config (`package.json`, `vite.config.js`, `tsconfig.json`, …), lockfile, and blade layout into place, removes the unused framework's directory, and records the choice in `frontend.json`.
+Copies the framework's config (`package.json`, `vite.config.js`, `tsconfig.json`, …), lockfile, blade layout and CSS from `vendor/saucebase/core/stubs/stack` into place, and records the choice in `saucebase.json`. The UI source is not copied: the app reads it from `saucebase/core`.
 
 **Options**
 
 | Option | Description |
 |--------|-------------|
 | `--path=<dir>` | Target app directory (defaults to the current directory) |
-| `--dev` | Contributor mode — config only, keeps both source dirs, uses git `skip-worktree`, runs `npm install` |
+| `--dev` | Contributor mode: copies the config files, runs the UI from `saucebase/core`, runs `npm install` |
+| `--sync` | Copies `resources/css` edits back to `saucebase/core` |
 | `--reset` | Reverts generated files to their pre-selection state |
-
-> **Note:** Framework selection is permanent for a given installation. To switch, start a new project or use `--reset` (dev mode).
+| `--force` | With `--reset`, discards `resources/css` edits that are not in `saucebase/core` |
+| `--no-skip-worktree` | Does not mark the generated files as `skip-worktree` in git |
+| `--no-install` | Skips `npm install` |
 
 ## How it works
 
 `saucebase` is a standalone `Illuminate\Console\Application` (not a Laravel package — no service provider). It operates on a target directory via `--path`, running artisan steps as subprocesses (`php <path>/artisan …`). Project creation is delegated to `laravel/installer`; everything after — environment, database, frontend, modules — is the Saucebase install flow.
+
+## Troubleshooting
+
+### SQLite: "database is locked"
+
+The native and Herd drivers use SQLite. By default it doesn't wait when another request or a queue worker is writing, and the second write fails. In `config/database.php`, under `sqlite`, set:
+
+```php
+'busy_timeout' => 5000,
+'journal_mode' => 'wal',
+```
+
+Writers then wait up to five seconds, and reads no longer block writes. The Docker driver uses MySQL and isn't affected.
 
 ## License
 

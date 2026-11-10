@@ -54,7 +54,9 @@ class InstallCommandResumeTest extends TestCase
 
     public function test_resume_command_carries_the_flags_through(): void
     {
-        $resume = $this->command(['path' => '/tmp/app', 'dev' => true, 'fresh' => true, 'force' => true])->resumeCommand();
+        $resume = $this->command(['path' => '/tmp/app', 'dev' => true, 'fresh' => true, 'force' => true, 'demo' => true])->resumeCommand();
+
+        $this->assertStringContainsString('--demo', $resume);
 
         $this->assertStringContainsString('--dev', $resume);
         $this->assertStringContainsString('--fresh', $resume);

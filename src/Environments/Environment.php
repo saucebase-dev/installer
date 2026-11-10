@@ -2,6 +2,7 @@
 
 namespace Saucebase\Installer\Environments;
 
+use Illuminate\Support\Facades\Process;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 
 abstract class Environment
@@ -9,11 +10,15 @@ abstract class Environment
     /** Label of the step that failed, for the failure callout. Set via fail(). */
     protected ?string $failedStep = null;
 
-    public static function make(string $name): self
+    /** Whether buildFrontend() left built assets, so the next steps skip the build. */
+    protected bool $frontendBuilt = false;
+
+    public static function make(string $name): Environment
     {
         return match ($name) {
             'docker' => new DockerEnvironment,
             'native' => new NativeEnvironment,
+            'herd' => new HerdEnvironment,
             default => throw new \InvalidArgumentException("Unknown driver: {$name}"),
         };
     }
@@ -33,20 +38,20 @@ abstract class Environment
 
         $command->promptForModules();
 
-        // Only an explicit --modules= list reaches the installer unfiltered. The prompt
-        // and --all-modules paths already filter by framework, and checking them here
-        // would cost a needless Packagist round trip.
-        $explicit = $command->optionOrNull('modules');
-
-        if (is_string($explicit) && $explicit !== '' && $explicit !== 'none'
-            && ! $command->assertModulesSupportStack($this->resolveModules($command))) {
-            return $this->fail('Checking module compatibility');
-        }
-
         $result = $this->boot($command);
 
         if ($result === InstallCommand::SUCCESS) {
-            $command->displaySuccess(array_merge($this->cdStep($command), $this->nextSteps($command)));
+            $this->frontendBuilt = $this->buildFrontend($command);
+
+            // A module that doesn't fit the installed core installs fine and then breaks
+            // every request, so "complete" waits until the app has actually booted.
+            if (! $this->artisan($command, ['about', '--only=environment'])) {
+                $result = $this->fail('Checking the app boots');
+            }
+        }
+
+        if ($result === InstallCommand::SUCCESS) {
+            $command->displaySuccess(array_merge($this->cdStep($command), $this->nextSteps($command), $this->demoStep($command)));
         } else {
             // Single exit point for every failing step in boot() — the install must
             // never end silently, since the app directory already exists by now.
@@ -54,6 +59,33 @@ abstract class Environment
         }
 
         return $result;
+    }
+
+    /**
+     * Builds the assets so the app's URL works before anyone runs Vite. Node isn't a
+     * prerequisite, so without npm, or when the build fails, it stays a next step.
+     */
+    protected function buildFrontend(InstallCommand $command): bool
+    {
+        if (! $this->commandExists('npm')) {
+            return false;
+        }
+
+        $command->info('Building the frontend...');
+
+        if ($command->runProcess(['npm', 'install'], 600) && $command->runProcess(['npm', 'run', 'build'], 600)) {
+            return true;
+        }
+
+        $command->warn('Building the frontend failed. Run `npm install && npm run build` in the app to see why.');
+
+        return false;
+    }
+
+    /** @param  string[]  $args */
+    protected function artisan(InstallCommand $command, array $args): bool
+    {
+        return $command->runArtisan($args);
     }
 
     /** Record which step failed, then return FAILURE for boot() to propagate. */
@@ -85,7 +117,10 @@ abstract class Environment
             return [];
         }
 
-        return ['cd `'.$target.'`'];
+        // Relative under the current directory, and quoted only where the shell would split it.
+        $path = str_starts_with($target, $cwd.'/') ? substr($target, strlen($cwd) + 1) : $target;
+
+        return ['cd '.(preg_match('#^[\w./-]+$#', $path) === 1 ? $path : escapeshellarg($path))];
     }
 
     private function normalizePath(string $path): string
@@ -93,6 +128,21 @@ abstract class Environment
         $real = realpath($path);
 
         return rtrim($real !== false ? $real : $path, '/');
+    }
+
+    /** @return string[] The demo password, once, when demo content was loaded. */
+    protected function demoStep(InstallCommand $command): array
+    {
+        $password = $command->optionOrNull('demo') ? $this->readEnvValue($command, 'DEMO_PASSWORD') : null;
+
+        if ($password === null) {
+            return [];
+        }
+
+        // Auth's demo data has the one account that sees everything.
+        return [is_dir($command->path('modules/auth'))
+            ? "Sign in as `chef@saucebase.dev` (admin) with the password `{$password}`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD"
+            : "Demo accounts use the password `{$password}`, saved in .env as DEMO_PASSWORD"];
     }
 
     /** Hook: perform driver-specific steps before the module prompt. Return an exit code to abort, null to continue. */
@@ -107,11 +157,7 @@ abstract class Environment
     protected function resolveModules(InstallCommand $command): array
     {
         if ($command->option('all-modules')) {
-            $available = $command->fetchAvailableModules();
-
-            return $command->getSelectedStack()
-                ? $command->filterModulesByFramework($available, $command->getSelectedStack())
-                : $available;
+            return $command->fetchAvailableModules();
         }
 
         if ($raw = $command->option('modules')) {
@@ -122,7 +168,11 @@ abstract class Environment
             return array_values(array_filter(array_map(function (string $name): string {
                 $name = strtolower(trim($name));
 
-                return $name !== '' ? (str_contains($name, '/') ? $name : "saucebase/{$name}") : '';
+                if ($name === '' || str_contains($name, '/')) {
+                    return $name;
+                }
+
+                return "saucebase/{$name}";
             }, explode(',', $raw))));
         }
 
@@ -152,6 +202,6 @@ abstract class Environment
 
     protected function commandExists(string $name): bool
     {
-        return (bool) shell_exec("which {$name} 2>/dev/null");
+        return trim(Process::run(['which', $name])->output()) !== '';
     }
 }
