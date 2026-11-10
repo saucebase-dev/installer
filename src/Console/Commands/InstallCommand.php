@@ -628,7 +628,7 @@ class InstallCommand extends Command
                 'saucebase:module-install',
                 ...array_map(fn (string $package) => Str::after($package, '/'), $selected),
                 '--no-interaction',
-                ...($this->option('demo') ? ['--demo'] : []),
+                ...($this->option('demo') ? ['--state=showcase'] : []),
             ], 900);
         });
 

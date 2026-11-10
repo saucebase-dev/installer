@@ -67,7 +67,7 @@ class InstallModulesRunnerTest extends TestCase
 
         // Core's saucebase:module-install does the rest: require, patches, migrate, seed.
         $this->assertTrue($ok);
-        $this->assertSame(['php artisan saucebase:module-install blog roadmap --no-interaction --demo'], $ran);
+        $this->assertSame(['php artisan saucebase:module-install blog roadmap --no-interaction --state=showcase'], $ran);
         $this->assertStringContainsString('DEMO_PASSWORD=', (string) file_get_contents($this->tmp.'/.env'));
     }
 
