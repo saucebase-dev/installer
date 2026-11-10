@@ -800,7 +800,7 @@ class DockerEnvironment extends Environment
     {
         $modules = $this->resolveModules($command);
 
-        return $modules === [] || $command->doInstallModules(
+        return ($modules === [] && ! $command->optionOrNull('template')) || $command->doInstallModules(
             $modules,
             fn (array $args, int $timeout): bool => $this->execInContainer($command, $args, $timeout, quiet: true),
         );

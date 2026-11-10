@@ -114,6 +114,15 @@ class NewCommandTest extends TestCase
         $this->assertTrue($command->exposedInstallArguments('acme', 'vue')['--demo']);
     }
 
+    public function test_a_saucebase_template_reaches_the_install_without_asking_for_modules_or_demo(): void
+    {
+        $command = $this->command(['template' => 'saucebase/uptime', 'force' => true]);
+
+        $this->assertSame([], $command->exposedResolveModulesUpfront('vue'));
+        $this->assertFalse($command->exposedWantsDemo([]));
+        $this->assertSame('saucebase/uptime', $command->exposedInstallArguments('acme', 'vue')['--template']);
+    }
+
     public function test_a_template_leaves_the_framework_and_modules_to_the_install(): void
     {
         $command = $this->command(['using' => 'vendor/template']);

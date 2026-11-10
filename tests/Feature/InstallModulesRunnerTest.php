@@ -71,6 +71,23 @@ class InstallModulesRunnerTest extends TestCase
         $this->assertStringContainsString('DEMO_PASSWORD=', (string) file_get_contents($this->tmp.'/.env'));
     }
 
+    /** A template brings its modules through Composer, and its own state. */
+    public function test_a_template_installs_with_the_state_named_after_it(): void
+    {
+        $command = $this->command();
+        $command->fakeOptions = ['path' => $this->tmp, 'template' => 'saucebase/uptime'];
+
+        $ran = [];
+        $command->installWith([], function (array $args) use (&$ran): bool {
+            $ran[] = implode(' ', $args);
+
+            return true;
+        });
+
+        $this->assertSame(['php artisan saucebase:module-install uptime --no-interaction --state=uptime'], $ran);
+        $this->assertStringContainsString('DEMO_PASSWORD=', (string) file_get_contents($this->tmp.'/.env'));
+    }
+
     public function test_a_failed_module_install_fails_the_step(): void
     {
         $ok = $this->command()->installWith(['saucebase/blog'], fn (array $args): bool => false);
