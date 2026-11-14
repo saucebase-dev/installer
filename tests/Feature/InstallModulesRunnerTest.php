@@ -71,8 +71,8 @@ class InstallModulesRunnerTest extends TestCase
         $this->assertStringContainsString('DEMO_PASSWORD=', (string) file_get_contents($this->tmp.'/.env'));
     }
 
-    /** Core's template-install requires the template with its modules, copies its stubs and seeds its default state. */
-    public function test_a_template_installs_through_template_install(): void
+    /** Core's template-install requires the template with its modules and copies its stubs; no demo unless asked. */
+    public function test_a_template_installs_clean_through_template_install(): void
     {
         $command = $this->command();
         $command->fakeOptions = ['path' => $this->tmp, 'template' => 'saucebase/uptime'];
@@ -85,6 +85,24 @@ class InstallModulesRunnerTest extends TestCase
         });
 
         $this->assertSame(['php artisan saucebase:template-install uptime --no-interaction'], $ran);
+        // No accounts are seeded, so there is no password to set.
+        $this->assertStringNotContainsString('DEMO_PASSWORD=', (string) @file_get_contents($this->tmp.'/.env'));
+    }
+
+    /** --demo is the template's demo: its default state, with the password its accounts use. */
+    public function test_a_template_with_demo_seeds_its_default_state(): void
+    {
+        $command = $this->command();
+        $command->fakeOptions = ['path' => $this->tmp, 'template' => 'saucebase/uptime', 'demo' => true];
+
+        $ran = [];
+        $command->installWith([], function (array $args) use (&$ran): bool {
+            $ran[] = implode(' ', $args);
+
+            return true;
+        });
+
+        $this->assertSame(['php artisan saucebase:template-install uptime --no-interaction --state=default'], $ran);
         $this->assertStringContainsString('DEMO_PASSWORD=', (string) file_get_contents($this->tmp.'/.env'));
     }
 
