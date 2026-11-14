@@ -30,7 +30,8 @@ class InstallCommand extends Command
                             {--app-name= : What the app is called (defaults to its directory name)}
                             {--demo : Load demo content and demo users}
                             {--template= : A Saucebase template (vendor/name): installs it, the modules it requires, and its starting data}
-                            {--state= : The template state to seed (defaults to the template default state)}
+                            {--make-template= : Build a template (vendor/name) in the new app, on the modules it installs}
+                            {--state= : A template state to seed; --demo seeds its default}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--modules= : Comma-separated list of modules to enable (e.g. Auth,Settings), or "none"}
@@ -350,6 +351,10 @@ class InstallCommand extends Command
             return self::FAILURE;
         }
 
+        if ($this->optionOrNull('make-template') && ! $this->makeTemplate()) {
+            return self::FAILURE;
+        }
+
         $this->createStorageLink();
         $this->clearCaches();
 
@@ -643,7 +648,7 @@ class InstallCommand extends Command
                 $this->demoPassword();
             }
 
-            $command = ['php', 'artisan', 'saucebase:template-install', Str::after($template, '/'), '--no-interaction',
+            $command = ['php', 'artisan', 'saucebase:template-install', $template, '--no-interaction',
                 ...($state !== null ? ['--state='.$state] : [])];
 
             return $this->runInstallTask('Installing the template', $command, $run);
@@ -663,6 +668,40 @@ class InstallCommand extends Command
             '--no-interaction',
             ...($state !== null ? ['--state='.$state] : []),
         ], $run);
+    }
+
+    /**
+     * The app builds a template: core's template recipe makes it in modules/, on the
+     * modules the app has, and Composer installs it there.
+     *
+     * @param  (\Closure(string[] $command, int $timeout): bool)|null  $run
+     */
+    public function makeTemplate(?\Closure $run = null): bool
+    {
+        $package = (string) $this->optionOrNull('make-template');
+
+        if ($this->optionOrNull('template')) {
+            $this->components->warn('An app takes one template: use --template or --make-template, not both.');
+
+            return false;
+        }
+
+        [$vendor, $name] = str_contains($package, '/') ? explode('/', $package, 2) : ['', ''];
+
+        // The name becomes the template's folder (kebab case) and its PHP namespace (Studly).
+        if (! preg_match('#^[a-z0-9_.-]+$#', $vendor) || ! preg_match('#^[a-z][a-z0-9]*(-[a-z0-9]+)*$#', $name) || Str::kebab(Str::studly($name)) !== $name) {
+            $this->components->warn('--make-template takes the template\'s package name, vendor/name in lowercase with dashes (acme/notes).');
+
+            return false;
+        }
+        $run ??= fn (array $command, int $timeout): bool => $this->runProcess($command, $timeout);
+
+        // A resumed install: the recipe already made it, so only Composer runs again.
+        $existing = json_decode((string) @file_get_contents($this->path("modules/{$name}/composer.json")), true) ?? [];
+        $made = ($existing['name'] ?? null) === $package && ($existing['type'] ?? null) === 'saucebase-template';
+
+        return ($made || $this->runInstallTask('Creating the template', ['php', 'artisan', 'saucebase:recipe', Str::studly($name), 'template', '--vendor='.$vendor, '--no-interaction'], $run))
+            && $this->runInstallTask('Installing the template', ['composer', 'update', $package, '--no-interaction'], $run);
     }
 
     /**
@@ -832,6 +871,10 @@ class InstallCommand extends Command
 
         if ($state = $this->optionOrNull('state')) {
             $command .= ' --state='.$state;
+        }
+
+        if ($make = $this->optionOrNull('make-template')) {
+            $command .= ' --make-template='.$make;
         }
 
         foreach (['all-modules', 'dev', 'fresh', 'force', 'demo'] as $flag) {

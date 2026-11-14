@@ -155,6 +155,13 @@ class NewCommandTest extends TestCase
         $this->assertSame('agency', $command->exposedInstallArguments('acme', 'vue')['--state']);
     }
 
+    public function test_make_template_reaches_the_install(): void
+    {
+        $command = $this->command(['make-template' => 'acme/notes', 'force' => true]);
+
+        $this->assertSame('acme/notes', $command->exposedInstallArguments('acme', 'vue')['--make-template']);
+    }
+
     public function test_a_template_leaves_the_framework_and_modules_to_the_install(): void
     {
         $command = $this->command(['using' => 'vendor/template']);
