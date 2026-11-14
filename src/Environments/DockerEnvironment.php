@@ -799,11 +799,11 @@ class DockerEnvironment extends Environment
     protected function installModules(InstallCommand $command): bool
     {
         $modules = $this->resolveModules($command);
+        $run = fn (array $args, int $timeout): bool => $this->execInContainer($command, $args, $timeout, quiet: true);
 
-        return ($modules === [] && ! $command->optionOrNull('template')) || $command->doInstallModules(
-            $modules,
-            fn (array $args, int $timeout): bool => $this->execInContainer($command, $args, $timeout, quiet: true),
-        );
+        $installed = ($modules === [] && ! $command->optionOrNull('template')) || $command->doInstallModules($modules, $run);
+
+        return $installed && (! $command->optionOrNull('make-template') || $command->makeTemplate($run));
     }
 
     protected function nextSteps(InstallCommand $command): array
