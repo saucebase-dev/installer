@@ -71,8 +71,8 @@ class InstallModulesRunnerTest extends TestCase
         $this->assertStringContainsString('DEMO_PASSWORD=', (string) file_get_contents($this->tmp.'/.env'));
     }
 
-    /** A template brings its modules through Composer, and its own state. */
-    public function test_a_template_installs_with_the_state_named_after_it(): void
+    /** Core's template-install requires the template with its modules, copies its stubs and seeds its default state. */
+    public function test_a_template_installs_through_template_install(): void
     {
         $command = $this->command();
         $command->fakeOptions = ['path' => $this->tmp, 'template' => 'saucebase/uptime'];
@@ -84,8 +84,23 @@ class InstallModulesRunnerTest extends TestCase
             return true;
         });
 
-        $this->assertSame(['php artisan saucebase:module-install uptime --no-interaction --state=uptime'], $ran);
+        $this->assertSame(['php artisan saucebase:template-install uptime --no-interaction'], $ran);
         $this->assertStringContainsString('DEMO_PASSWORD=', (string) file_get_contents($this->tmp.'/.env'));
+    }
+
+    public function test_a_template_state_is_passed_through(): void
+    {
+        $command = $this->command();
+        $command->fakeOptions = ['path' => $this->tmp, 'template' => 'saucebase/uptime', 'state' => 'agency'];
+
+        $ran = [];
+        $command->installWith([], function (array $args) use (&$ran): bool {
+            $ran[] = implode(' ', $args);
+
+            return true;
+        });
+
+        $this->assertSame(['php artisan saucebase:template-install uptime --no-interaction --state=agency'], $ran);
     }
 
     public function test_a_failed_module_install_fails_the_step(): void
