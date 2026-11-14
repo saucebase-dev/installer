@@ -252,7 +252,16 @@ class InstallCommand extends Command
             return [];
         }
 
+        // `saucebase-dev` (dev-tools) sets this to the local registry: core, modules and
+        // templates then come from there at their dev branches. Unset: the published ones.
+        $registry = getenv('SAUCEBASE_REGISTRY') ?: null;
+
         return [
+            ...($registry === null ? [] : [
+                ['composer', 'config', 'repositories.saucebase', 'composer', $registry],
+                ['composer', 'config', 'minimum-stability', 'dev'],
+                ['composer', 'config', 'prefer-stable', 'true'],
+            ]),
             // Composer refuses an unlisted plugin outright when it cannot ask.
             ['composer', 'config', 'allow-plugins.saucebase/module-installer', 'true'],
             ['composer', 'require', 'saucebase/core', '--no-interaction'],
