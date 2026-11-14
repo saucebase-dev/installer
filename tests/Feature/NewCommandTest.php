@@ -114,13 +114,38 @@ class NewCommandTest extends TestCase
         $this->assertTrue($command->exposedInstallArguments('acme', 'vue')['--demo']);
     }
 
-    public function test_a_saucebase_template_reaches_the_install_without_asking_for_modules_or_demo(): void
+    /** The template brings its modules; its demo is offered like any demo, declined by default. */
+    public function test_a_saucebase_template_reaches_the_install_without_asking_for_modules(): void
     {
         $command = $this->command(['template' => 'saucebase/uptime', 'force' => true]);
+        Prompt::fake([Key::ENTER]);
 
         $this->assertSame([], $command->exposedResolveModulesUpfront('vue'));
         $this->assertFalse($command->exposedWantsDemo([]));
         $this->assertSame('saucebase/uptime', $command->exposedInstallArguments('acme', 'vue')['--template']);
+    }
+
+    public function test_a_template_demo_is_offered(): void
+    {
+        $command = $this->command(['template' => 'saucebase/uptime', 'force' => true]);
+        Prompt::fake(['y', Key::ENTER]);
+
+        $this->assertTrue($command->exposedWantsDemo([]));
+    }
+
+    /** --state already chose what to seed: nothing to ask. */
+    public function test_a_template_state_skips_the_demo_question(): void
+    {
+        $command = $this->command(['template' => 'saucebase/uptime', 'state' => 'agency', 'force' => true]);
+
+        $this->assertFalse($command->exposedWantsDemo([]));
+    }
+
+    public function test_a_template_with_demo_passes_it_on(): void
+    {
+        $command = $this->command(['template' => 'saucebase/uptime', 'demo' => true, 'force' => true]);
+
+        $this->assertTrue($command->exposedWantsDemo([]));
     }
 
     public function test_a_template_state_reaches_the_install(): void

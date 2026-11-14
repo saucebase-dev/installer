@@ -230,7 +230,8 @@ class NewCommand extends Command
     }
 
     /**
-     * Demo content comes from the modules, so there is nothing to offer without them.
+     * Demo content comes from the modules or the template, so there is nothing to offer
+     * without them.
      * Declined by default: a real app would have to delete it, demo users included.
      *
      * @param  string[]|null  $modules  Null when the install decides which modules come
@@ -239,6 +240,15 @@ class NewCommand extends Command
     {
         if ($this->option('demo')) {
             return true;
+        }
+
+        // A template brings its own demo (its default state); --state already chose one.
+        if ($this->option('template')) {
+            return ! $this->option('state') && confirm(
+                label: 'Load the template\'s demo?',
+                default: false,
+                hint: 'Sample data and an account to sign in with',
+            );
         }
 
         if ($modules === [] || $this->option('modules') === 'none') {

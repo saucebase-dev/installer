@@ -632,12 +632,19 @@ class InstallCommand extends Command
 
         $this->newLine();
 
-        // Core's template-install requires the template with its modules, copies its
-        // stubs over the app and seeds its default state (or --state).
+        // Core's template-install requires the template with its modules and copies its
+        // stubs over the app. Its demo is its default state, seeded only when asked for
+        // (--demo), like any demo; --state names another.
         if ($template = $this->optionOrNull('template')) {
-            $this->demoPassword();
+            $state = $this->optionOrNull('state') ?: ($this->optionOrNull('demo') ? 'default' : null);
+
+            // Only a seeded state creates accounts that need it.
+            if ($state !== null) {
+                $this->demoPassword();
+            }
+
             $command = ['php', 'artisan', 'saucebase:template-install', Str::after($template, '/'), '--no-interaction',
-                ...(($state = $this->optionOrNull('state')) ? ['--state='.$state] : [])];
+                ...($state !== null ? ['--state='.$state] : [])];
 
             return $this->runInstallTask('Installing the template', $command, $run);
         }
