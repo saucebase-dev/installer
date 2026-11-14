@@ -47,6 +47,33 @@ class InstallCommandCoreTest extends TestCase
         ], $command->ran);
     }
 
+    /**
+     * `saucebase-dev` sets SAUCEBASE_REGISTRY to the local registry: the app then takes
+     * core, its modules and templates from there, at their dev branches, before anything
+     * is required. Unset, the install is the published one.
+     */
+    public function test_a_local_registry_is_added_before_core_is_required(): void
+    {
+        putenv('SAUCEBASE_REGISTRY=https://saucebase-packages.test/composer');
+
+        try {
+            $command = $this->command();
+
+            $this->assertTrue($command->installCore());
+            $this->assertSame([
+                'composer config repositories.saucebase composer https://saucebase-packages.test/composer',
+                'composer config minimum-stability dev',
+                'composer config prefer-stable true',
+                'composer config allow-plugins.saucebase/module-installer true',
+                'composer require saucebase/core --no-interaction',
+                'composer require --dev saucebase/laravel-playwright --no-interaction',
+                'php artisan saucebase:install react --force --no-interaction',
+            ], $command->ran);
+        } finally {
+            putenv('SAUCEBASE_REGISTRY');
+        }
+    }
+
     public function test_it_names_the_project_after_its_directory(): void
     {
         $this->files->put($this->dir.'/composer.json', "{\n    \"\$schema\": \"https://getcomposer.org/schema.json\",\n    \"name\": \"laravel/laravel\",\n    \"type\": \"project\"\n}\n");

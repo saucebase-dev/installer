@@ -33,6 +33,7 @@ class NewCommand extends Command
                             {--app-name= : What the app is called (defaults to its directory name), prompted if omitted}
                             {--using= : A starter kit to start from, instead of a plain Laravel application}
                             {--template= : A Saucebase template (vendor/name): installs it, the modules it requires, and its starting data}
+                            {--state= : The template state to seed (defaults to the template default state)}
                             {--dev : Dev environment}
                             {--demo : Load demo content and demo users}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
@@ -338,6 +339,10 @@ class NewCommand extends Command
 
         if ($template = $this->option('template')) {
             $arguments['--template'] = $template;
+        }
+
+        if ($state = $this->option('state')) {
+            $arguments['--state'] = $state;
         }
 
         foreach (['all-modules', 'dev', 'fresh', 'force'] as $flag) {

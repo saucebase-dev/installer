@@ -139,8 +139,9 @@ abstract class Environment
             return [];
         }
 
-        // Auth's demo data has the one account that sees everything.
-        return [is_dir($command->path('modules/auth'))
+        // Auth's demo data has the one account that sees everything; a template alone
+        // seeds its own accounts instead.
+        return [$command->optionOrNull('demo') && is_dir($command->path('modules/auth'))
             ? "Sign in as `chef@saucebase.dev` (admin) with the password `{$password}`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD"
             : "Demo accounts use the password `{$password}`, saved in .env as DEMO_PASSWORD"];
     }

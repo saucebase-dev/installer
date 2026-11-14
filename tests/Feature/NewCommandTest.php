@@ -123,6 +123,13 @@ class NewCommandTest extends TestCase
         $this->assertSame('saucebase/uptime', $command->exposedInstallArguments('acme', 'vue')['--template']);
     }
 
+    public function test_a_template_state_reaches_the_install(): void
+    {
+        $command = $this->command(['template' => 'saucebase/uptime', 'state' => 'agency', 'force' => true]);
+
+        $this->assertSame('agency', $command->exposedInstallArguments('acme', 'vue')['--state']);
+    }
+
     public function test_a_template_leaves_the_framework_and_modules_to_the_install(): void
     {
         $command = $this->command(['using' => 'vendor/template']);
