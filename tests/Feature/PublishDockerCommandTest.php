@@ -89,6 +89,25 @@ class PublishDockerCommandTest extends TestCase
         }
     }
 
+    /**
+     * The headers Laravel's documented nginx config sends. A location with an add_header
+     * of its own drops the server's, so each such location repeats them.
+     */
+    public function test_responses_carry_the_security_headers(): void
+    {
+        foreach (['nginx.conf', 'nginx-no-ssl.conf'] as $file) {
+            $config = (string) file_get_contents(dirname(__DIR__, 2).'/stubs/docker/docker/'.$file);
+            $server = (string) preg_replace('/location [^{]*\{[^}]*\}/', '', $config);
+
+            preg_match_all('/location [^{]*\{[^}]*add_header[^}]*\}/', $config, $locations);
+
+            foreach ([$server, ...$locations[0]] as $block) {
+                $this->assertStringContainsString('add_header X-Frame-Options "SAMEORIGIN" always;', $block, $file);
+                $this->assertStringContainsString('add_header X-Content-Type-Options "nosniff" always;', $block, $file);
+            }
+        }
+    }
+
     public function test_it_keeps_existing_files_when_not_forced(): void
     {
         file_put_contents($this->tmp.'/docker-compose.yml', 'mine');
