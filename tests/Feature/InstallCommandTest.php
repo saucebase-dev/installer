@@ -438,50 +438,6 @@ class InstallCommandTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
-    // resolveModuleSelection — --modules= matching
-    // -------------------------------------------------------------------------
-
-    public function test_resolve_matches_full_package_name(): void
-    {
-        $cmd = new TestableInstallCommand;
-        $cmd->fakeOptions = ['modules' => 'saucebase/auth'];
-
-        $result = $cmd->exposedResolveModuleSelection(['saucebase/auth', 'saucebase/billing']);
-
-        $this->assertSame(['saucebase/auth'], $result);
-    }
-
-    public function test_resolve_matches_short_name(): void
-    {
-        $cmd = new TestableInstallCommand;
-        $cmd->fakeOptions = ['modules' => 'auth'];
-
-        $result = $cmd->exposedResolveModuleSelection(['saucebase/auth', 'saucebase/billing']);
-
-        $this->assertSame(['saucebase/auth'], $result);
-    }
-
-    public function test_resolve_matches_mixed_case_short_name(): void
-    {
-        $cmd = new TestableInstallCommand;
-        $cmd->fakeOptions = ['modules' => 'Auth'];
-
-        $result = $cmd->exposedResolveModuleSelection(['saucebase/auth', 'saucebase/billing']);
-
-        $this->assertSame(['saucebase/auth'], $result);
-    }
-
-    public function test_resolve_matches_multiple_full_package_names(): void
-    {
-        $cmd = new TestableInstallCommand;
-        $cmd->fakeOptions = ['modules' => 'saucebase/auth,saucebase/billing'];
-
-        $result = $cmd->exposedResolveModuleSelection(['saucebase/auth', 'saucebase/billing', 'saucebase/settings']);
-
-        $this->assertSame(['saucebase/auth', 'saucebase/billing'], $result);
-    }
-
-    // -------------------------------------------------------------------------
     // displaySuccess — sequential step numbering
     // -------------------------------------------------------------------------
 
@@ -523,6 +479,37 @@ class InstallCommandTest extends TestCase
         $cmd->exposedSetupModules();
 
         $this->assertFalse($cmd->fetchCalled, 'Packagist must not be fetched when all names are fully qualified');
+    }
+
+    /** A short name means one of Saucebase's: a private module isn't on Packagist, and is still installed. */
+    public function test_short_names_are_saucebase_modules_even_off_packagist(): void
+    {
+        $cmd = new class extends TestableInstallCommand
+        {
+            public bool $fetchCalled = false;
+
+            /** @var string[] */
+            public array $installed = [];
+
+            public function fetchAvailableModules(): array
+            {
+                $this->fetchCalled = true;
+
+                return ['saucebase/auth'];
+            }
+
+            public function doInstallModules(array $selected, ?\Closure $run = null): bool
+            {
+                $this->installed = $selected;
+
+                return true;
+            }
+        };
+        $cmd->fakeOptions = ['modules' => 'auth, Tenancy,acme/thing'];
+        $cmd->exposedSetupModules();
+
+        $this->assertSame(['saucebase/auth', 'saucebase/tenancy', 'acme/thing'], $cmd->installed);
+        $this->assertFalse($cmd->fetchCalled);
     }
 
     private function fakePackagistList(): void

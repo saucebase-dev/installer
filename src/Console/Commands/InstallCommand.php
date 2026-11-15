@@ -595,12 +595,16 @@ class InstallCommand extends Command
             return true;
         }
 
-        // Fast path: skip Packagist discovery when all requested names are fully qualified
+        // Named modules need no discovery: a short name is one of Saucebase's, as in
+        // core's template-install. Private modules aren't on Packagist; Composer says
+        // so if a name doesn't exist.
         if ($opt) {
-            $names = array_values(array_filter(array_map(fn ($n) => strtolower(trim($n)), explode(',', $opt))));
-            if ($names && ! array_filter($names, fn ($n) => ! str_contains($n, '/'))) {
-                return $this->doInstallModules($names);
-            }
+            return $this->doInstallModules(collect(explode(',', $opt))
+                ->map(fn (string $name) => strtolower(trim($name)))
+                ->filter()
+                ->map(fn (string $name) => str_contains($name, '/') ? $name : 'saucebase/'.$name)
+                ->values()
+                ->all());
         }
 
         if (! $opt && empty($this->selectedModules) && ! $this->option('all-modules')) {
@@ -740,22 +744,6 @@ class InstallCommand extends Command
         // 1. Select all modules
         if ($this->option('all-modules')) {
             return $available;
-        }
-
-        // 2. Modules passed via --modules option
-        if ($modules = $this->option('modules')) {
-            $requested = collect(explode(',', $modules))
-                ->map(fn ($m) => strtolower(trim($m)))
-                ->filter()
-                ->values();
-
-            return collect($available)
-                ->filter(function (string $package) use ($requested) {
-                    return $requested->contains(strtolower($package))
-                        || $requested->contains(strtolower(Str::after($package, '/')));
-                })
-                ->values()
-                ->all();
         }
 
         return $this->selectedModules;
