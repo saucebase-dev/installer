@@ -63,6 +63,13 @@ class InstallCommandResumeTest extends TestCase
         $this->assertStringContainsString('--force', $resume);
     }
 
+    public function test_resume_command_keeps_the_template_and_its_state(): void
+    {
+        $resume = $this->command(['path' => '/tmp/app', 'template' => 'saucebase/uptime', 'state' => 'agency'])->resumeCommand();
+
+        $this->assertStringContainsString('--template=saucebase/uptime --state=agency', $resume);
+    }
+
     public function test_resume_command_drops_the_cd_when_the_target_is_the_current_directory(): void
     {
         $resume = $this->command(['path' => getcwd()])->resumeCommand(['--driver' => 'native']);

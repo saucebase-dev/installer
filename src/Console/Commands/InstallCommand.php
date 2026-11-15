@@ -29,6 +29,9 @@ class InstallCommand extends Command
                             {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
                             {--app-name= : What the app is called (defaults to its directory name)}
                             {--demo : Load demo content and demo users}
+                            {--template= : A Saucebase template (vendor/name): installs it, the modules it requires, and its starting data}
+                            {--make-template= : Build a template (vendor/name) in the new app, on the modules it installs}
+                            {--state= : A template state to seed; --demo seeds its default}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
                             {--all-modules : Enable and migrate all available modules without prompting}
                             {--modules= : Comma-separated list of modules to enable (e.g. Auth,Settings), or "none"}
@@ -250,7 +253,16 @@ class InstallCommand extends Command
             return [];
         }
 
+        // `saucebase-dev` (dev-tools) sets this to the local registry: core, modules and
+        // templates then come from there at their dev branches. Unset: the published ones.
+        $registry = getenv('SAUCEBASE_REGISTRY') ?: null;
+
         return [
+            ...($registry === null ? [] : [
+                ['composer', 'config', 'repositories.saucebase', 'composer', $registry],
+                ['composer', 'config', 'minimum-stability', 'dev'],
+                ['composer', 'config', 'prefer-stable', 'true'],
+            ]),
             // Composer refuses an unlisted plugin outright when it cannot ask.
             ['composer', 'config', 'allow-plugins.saucebase/module-installer', 'true'],
             ['composer', 'require', 'saucebase/core', '--no-interaction'],
@@ -290,7 +302,8 @@ class InstallCommand extends Command
 
     public function promptForModules(): void
     {
-        if ($this->option('all-modules') || $this->option('modules') !== null || $this->option('dev') || $this->isCI()) {
+        // A template requires its own modules.
+        if ($this->option('template') || $this->option('all-modules') || $this->option('modules') !== null || $this->option('dev') || $this->isCI()) {
             return;
         }
 
@@ -336,6 +349,10 @@ class InstallCommand extends Command
         $this->runStack();
 
         if (! $this->setupModules()) {
+            return self::FAILURE;
+        }
+
+        if ($this->optionOrNull('make-template') && ! $this->makeTemplate()) {
             return self::FAILURE;
         }
 
@@ -567,6 +584,11 @@ class InstallCommand extends Command
     /** False when a selected module could not be wired into the application. */
     protected function setupModules(): bool
     {
+        // Its composer.json requires the modules; doInstallModules adds the template itself.
+        if ($this->option('template')) {
+            return $this->doInstallModules([]);
+        }
+
         $opt = $this->option('modules');
 
         if ($opt === 'none') {
@@ -614,27 +636,88 @@ class InstallCommand extends Command
     {
         $run ??= fn (array $command, int $timeout): bool => $this->runArtisan(array_slice($command, 2), $timeout);
 
-        if ($this->option('demo')) {
+        $this->newLine();
+
+        // Core's template-install requires the template with its modules and copies its
+        // stubs over the app. Its demo is its default state, seeded only when asked for
+        // (--demo), like any demo; --state names another.
+        if ($template = $this->optionOrNull('template')) {
+            $state = $this->optionOrNull('state') ?: ($this->optionOrNull('demo') ? 'default' : null);
+
+            // Only a seeded state creates accounts that need it.
+            if ($state !== null) {
+                $this->demoPassword();
+            }
+
+            $command = ['php', 'artisan', 'saucebase:template-install', $template, '--no-interaction',
+                ...($state !== null ? ['--state='.$state] : [])];
+
+            return $this->runInstallTask('Installing the template', $command, $run);
+        }
+
+        $state = $this->option('demo') ? 'showcase' : null;
+
+        if ($state !== null) {
             $this->demoPassword();
         }
 
-        $this->newLine();
+        return $this->runInstallTask('Installing modules', [
+            'php',
+            'artisan',
+            'saucebase:module-install',
+            ...array_map(fn (string $package) => Str::after($package, '/'), $selected),
+            '--no-interaction',
+            ...($state !== null ? ['--state='.$state] : []),
+        ], $run);
+    }
 
+    /**
+     * The app builds a template: core's template recipe makes it in modules/, on the
+     * modules the app has, and Composer installs it there.
+     *
+     * @param  (\Closure(string[] $command, int $timeout): bool)|null  $run
+     */
+    public function makeTemplate(?\Closure $run = null): bool
+    {
+        $package = (string) $this->optionOrNull('make-template');
+
+        if ($this->optionOrNull('template')) {
+            $this->components->warn('An app takes one template: use --template or --make-template, not both.');
+
+            return false;
+        }
+
+        [$vendor, $name] = str_contains($package, '/') ? explode('/', $package, 2) : ['', ''];
+
+        // The name becomes the template's folder (kebab case) and its PHP namespace (Studly).
+        if (! preg_match('#^[a-z0-9_.-]+$#', $vendor) || ! preg_match('#^[a-z][a-z0-9]*(-[a-z0-9]+)*$#', $name) || Str::kebab(Str::studly($name)) !== $name) {
+            $this->components->warn('--make-template takes the template\'s package name, vendor/name in lowercase with dashes (acme/notes).');
+
+            return false;
+        }
+        $run ??= fn (array $command, int $timeout): bool => $this->runProcess($command, $timeout);
+
+        // A resumed install: the recipe already made it, so only Composer runs again.
+        $existing = json_decode((string) @file_get_contents($this->path("modules/{$name}/composer.json")), true) ?? [];
+        $made = ($existing['name'] ?? null) === $package && ($existing['type'] ?? null) === 'saucebase-template';
+
+        return ($made || $this->runInstallTask('Creating the template', ['php', 'artisan', 'saucebase:recipe', Str::studly($name), 'template', '--vendor='.$vendor, '--no-interaction'], $run))
+            && $this->runInstallTask('Installing the template', ['composer', 'update', $package, '--no-interaction'], $run);
+    }
+
+    /**
+     * @param  string[]  $command
+     * @param  \Closure(string[] $command, int $timeout): bool  $run
+     */
+    private function runInstallTask(string $label, array $command, \Closure $run): bool
+    {
         $ok = false;
-        $this->task('Installing modules', function () use ($selected, $run, &$ok) {
-            return $ok = $run([
-                'php',
-                'artisan',
-                'saucebase:module-install',
-                ...array_map(fn (string $package) => Str::after($package, '/'), $selected),
-                '--no-interaction',
-                ...($this->option('demo') ? ['--demo'] : []),
-            ], 900);
+        $this->task($label, function () use ($command, $run, &$ok) {
+            return $ok = $run($command, 900);
         });
 
         if (! $ok) {
-            $this->components->warn('Installing modules failed. Run it again to see why: php artisan saucebase:module-install '
-                .implode(' ', array_map(fn (string $package) => Str::after($package, '/'), $selected)));
+            $this->components->warn("{$label} failed. Run it again to see why: ".implode(' ', array_diff($command, ['--no-interaction'])));
         }
 
         return $ok;
@@ -781,6 +864,18 @@ class InstallCommand extends Command
 
         if ($modules = $this->resumeModules()) {
             $command .= ' --modules='.$modules;
+        }
+
+        if ($template = $this->optionOrNull('template')) {
+            $command .= ' --template='.$template;
+        }
+
+        if ($state = $this->optionOrNull('state')) {
+            $command .= ' --state='.$state;
+        }
+
+        if ($make = $this->optionOrNull('make-template')) {
+            $command .= ' --make-template='.$make;
         }
 
         foreach (['all-modules', 'dev', 'fresh', 'force', 'demo'] as $flag) {

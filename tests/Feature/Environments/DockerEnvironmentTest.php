@@ -463,6 +463,42 @@ class DockerEnvironmentTest extends TestCase
         $this->assertSame(Command::FAILURE, $result);
     }
 
+    /** Docker installs on its own path: --make-template runs there too, in the container. */
+    public function test_make_template_runs_in_the_container(): void
+    {
+        $env = new class extends DockerEnvironment
+        {
+            /** @var list<string> */
+            public array $ran = [];
+
+            public function exposedInstallModules(InstallCommand $command): bool
+            {
+                return $this->installModules($command);
+            }
+
+            protected function execInContainer(InstallCommand $command, array $args, int $timeout = 120, bool $quiet = false): bool
+            {
+                $this->ran[] = implode(' ', $args);
+
+                return true;
+            }
+        };
+
+        $command = new class(null, [], ['modules' => 'none', 'make-template' => 'acme/notes']) extends FakeInstallCommand
+        {
+            protected function task(string $label, callable $step): bool
+            {
+                return (bool) $step();
+            }
+        };
+
+        $this->assertTrue($env->exposedInstallModules($command));
+        $this->assertSame([
+            'php artisan saucebase:recipe Notes template --vendor=acme --no-interaction',
+            'composer update acme/notes --no-interaction',
+        ], $env->ran);
+    }
+
     public function test_boot_installs_saucebase_in_the_container_and_fails_when_it_cannot(): void
     {
         $env = new class extends DockerEnvironment

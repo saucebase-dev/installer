@@ -108,6 +108,40 @@ class EnvironmentHelpersTest extends TestCase
         $this->assertSame(['Sign in as `chef@saucebase.dev` (admin) with the password `s3cret`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD'], $steps);
     }
 
+    /** A template seeds its own accounts; auth's demo admin is only there with --demo. */
+    public function test_a_template_without_demo_content_names_no_admin_account(): void
+    {
+        file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
+        mkdir($this->tmp.'/modules/auth', recursive: true);
+
+        $steps = $this->environment()->exposedDemoStep($this->command(template: 'saucebase/uptime'));
+
+        $this->assertSame(['Demo accounts use the password `s3cret`, saved in .env as DEMO_PASSWORD'], $steps);
+    }
+
+    /** A template's demo seeds its own accounts: auth's admin is not among them. */
+    public function test_a_template_demo_names_the_templates_own_account(): void
+    {
+        file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
+        mkdir($this->tmp.'/modules/auth', recursive: true);
+        mkdir($this->tmp.'/modules/uptime', recursive: true);
+        file_put_contents($this->tmp.'/modules/uptime/composer.json', json_encode(['extra' => ['saucebase' => ['demo_account' => 'uptime@saucebase.dev']]]));
+
+        $steps = $this->environment()->exposedDemoStep($this->command(demo: true, template: 'saucebase/uptime'));
+
+        $this->assertSame(['Sign in as `uptime@saucebase.dev` with the password `s3cret`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD'], $steps);
+    }
+
+    public function test_a_template_demo_without_a_named_account_gives_the_password_only(): void
+    {
+        file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
+        mkdir($this->tmp.'/modules/auth', recursive: true);
+
+        $steps = $this->environment()->exposedDemoStep($this->command(demo: true, template: 'saucebase/uptime'));
+
+        $this->assertSame(['Demo accounts use the password `s3cret`, saved in .env as DEMO_PASSWORD'], $steps);
+    }
+
     public function test_without_demo_content_no_password_is_shown(): void
     {
         file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
@@ -115,11 +149,11 @@ class EnvironmentHelpersTest extends TestCase
         $this->assertSame([], $this->environment()->exposedDemoStep($this->command()));
     }
 
-    private function command(?string $modules = null, ?string $target = null, bool $demo = false): InstallCommand
+    private function command(?string $modules = null, ?string $target = null, bool $demo = false, ?string $template = null): InstallCommand
     {
-        return new class($target ?? $this->tmp, $modules, $demo) extends InstallCommand
+        return new class($target ?? $this->tmp, $modules, $demo, $template) extends InstallCommand
         {
-            public function __construct(private string $target, private ?string $modules, private bool $demo)
+            public function __construct(private string $target, private ?string $modules, private bool $demo, private ?string $template)
             {
                 parent::__construct();
             }
@@ -134,6 +168,7 @@ class EnvironmentHelpersTest extends TestCase
                 return match ($key) {
                     'modules' => $this->modules,
                     'demo' => $this->demo ?: null,
+                    'template' => $this->template,
                     default => null,
                 };
             }

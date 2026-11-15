@@ -31,7 +31,10 @@ class NewCommand extends Command
                             {--ssl= : Enable HTTPS with mkcert for docker (yes/no) — prompted if omitted}
                             {--domain= : Hostname the app is served on (e.g. myapp.test) — prompted if omitted}
                             {--app-name= : What the app is called (defaults to its directory name), prompted if omitted}
-                            {--using= : A Saucebase template to start from, instead of a plain Laravel application}
+                            {--using= : A starter kit to start from, instead of a plain Laravel application}
+                            {--template= : A Saucebase template (vendor/name): installs it, the modules it requires, and its starting data}
+                            {--state= : A template state to seed; --demo seeds its default}
+                            {--make-template= : Build a template (vendor/name) in the new app, on the modules it installs}
                             {--dev : Dev environment}
                             {--demo : Load demo content and demo users}
                             {--fresh : Run migrate:fresh instead of migrate (destructive)}
@@ -211,6 +214,11 @@ class NewCommand extends Command
      */
     protected function resolveModulesUpfront(?string $stack): ?array
     {
+        // A template requires its own modules.
+        if ($this->option('template')) {
+            return [];
+        }
+
         if ($stack === null || $this->option('all-modules') || $this->option('dev')
             || $this->option('modules') !== null) {
             return null;
@@ -223,7 +231,8 @@ class NewCommand extends Command
     }
 
     /**
-     * Demo content comes from the modules, so there is nothing to offer without them.
+     * Demo content comes from the modules or the template, so there is nothing to offer
+     * without them.
      * Declined by default: a real app would have to delete it, demo users included.
      *
      * @param  string[]|null  $modules  Null when the install decides which modules come
@@ -232,6 +241,15 @@ class NewCommand extends Command
     {
         if ($this->option('demo')) {
             return true;
+        }
+
+        // A template brings its own demo (its default state); --state already chose one.
+        if ($this->option('template')) {
+            return ! $this->option('state') && confirm(
+                label: 'Load the template\'s demo?',
+                default: false,
+                hint: 'Sample data and an account to sign in with',
+            );
         }
 
         if ($modules === [] || $this->option('modules') === 'none') {
@@ -328,6 +346,18 @@ class NewCommand extends Command
 
         if ($demo) {
             $arguments['--demo'] = true;
+        }
+
+        if ($template = $this->option('template')) {
+            $arguments['--template'] = $template;
+        }
+
+        if ($state = $this->option('state')) {
+            $arguments['--state'] = $state;
+        }
+
+        if ($make = $this->option('make-template')) {
+            $arguments['--make-template'] = $make;
         }
 
         foreach (['all-modules', 'dev', 'fresh', 'force'] as $flag) {
