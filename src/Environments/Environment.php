@@ -2,6 +2,8 @@
 
 namespace Saucebase\Installer\Environments;
 
+use Illuminate\Support\Str;
+
 use Illuminate\Support\Facades\Process;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 
@@ -139,10 +141,21 @@ abstract class Environment
             return [];
         }
 
-        // Auth's demo data has the one account that sees everything; a template alone
-        // seeds its own accounts instead.
-        return [$command->optionOrNull('demo') && is_dir($command->path('modules/auth'))
-            ? "Sign in as `chef@saucebase.dev` (admin) with the password `{$password}`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD"
+        // A template's demo seeds its own accounts, and may name the one to sign in with
+        // (`extra.saucebase.demo_account`). Without a template, auth's demo admin sees everything.
+        $template = $command->optionOrNull('template');
+        $account = match (true) {
+            $template !== null => json_decode((string) @file_get_contents($command->path('modules/'.Str::afterLast($template, '/').'/composer.json')), true)['extra']['saucebase']['demo_account'] ?? null,
+            $command->optionOrNull('demo') && is_dir($command->path('modules/auth')) => '`chef@saucebase.dev` (admin)',
+            default => null,
+        };
+
+        if (is_string($account) && $account !== '' && $template !== null) {
+            $account = "`{$account}`";
+        }
+
+        return [is_string($account) && $account !== ''
+            ? "Sign in as {$account} with the password `{$password}`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD"
             : "Demo accounts use the password `{$password}`, saved in .env as DEMO_PASSWORD"];
     }
 
