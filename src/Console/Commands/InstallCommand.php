@@ -302,7 +302,8 @@ class InstallCommand extends Command
 
     public function promptForModules(): void
     {
-        if ($this->option('all-modules') || $this->option('modules') !== null || $this->option('dev') || $this->isCI()) {
+        // A template requires its own modules.
+        if ($this->option('template') || $this->option('all-modules') || $this->option('modules') !== null || $this->option('dev') || $this->isCI()) {
             return;
         }
 

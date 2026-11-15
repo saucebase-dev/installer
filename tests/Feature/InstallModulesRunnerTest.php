@@ -104,6 +104,38 @@ class InstallModulesRunnerTest extends TestCase
         $this->assertStringNotContainsString('DEMO_PASSWORD=', (string) @file_get_contents($this->tmp.'/.env'));
     }
 
+    /** A template requires its own modules: nothing to look up or ask. */
+    public function test_a_template_install_does_not_ask_for_modules(): void
+    {
+        $command = new class extends TestableInstallCommand
+        {
+            public bool $fetched = false;
+
+            public function fetchAvailableModules(): array
+            {
+                $this->fetched = true;
+
+                return [];
+            }
+
+            protected function isCI(): bool
+            {
+                return false;
+            }
+
+            // --modules not given is null, which fakeOptions can't hold.
+            public function option($key = null): string|array|bool|null
+            {
+                return $key === 'modules' ? null : parent::option($key);
+            }
+        };
+        $command->fakeOptions = ['path' => $this->tmp, 'template' => 'saucebase/uptime'];
+
+        $command->promptForModules();
+
+        $this->assertFalse($command->fetched);
+    }
+
     /** --demo is the template's demo: its default state, with the password its accounts use. */
     public function test_a_template_with_demo_seeds_its_default_state(): void
     {
