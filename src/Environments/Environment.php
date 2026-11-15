@@ -2,9 +2,8 @@
 
 namespace Saucebase\Installer\Environments;
 
-use Illuminate\Support\Str;
-
 use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 
 abstract class Environment
