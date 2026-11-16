@@ -136,8 +136,11 @@ abstract class Environment
     {
         $password = ($command->optionOrNull('demo') || $command->optionOrNull('template')) ? $this->readEnvValue($command, 'DEMO_PASSWORD') : null;
 
+        // No demo accounts: with auth, the owner's own account has to become the admin.
         if ($password === null) {
-            return [];
+            return is_dir($command->path('modules/auth'))
+                ? ['Sign up, then make your account the admin: `php artisan auth:make-admin you@example.com`']
+                : [];
         }
 
         // A template's demo seeds its own accounts, and may name the one to sign in with

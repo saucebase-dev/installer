@@ -149,6 +149,17 @@ class EnvironmentHelpersTest extends TestCase
         $this->assertSame([], $this->environment()->exposedDemoStep($this->command()));
     }
 
+    /** A clean install has no accounts: the owner signs up, then makes that account the admin. */
+    public function test_without_demo_content_auth_says_how_to_become_admin(): void
+    {
+        mkdir($this->tmp.'/modules/auth', recursive: true);
+
+        $this->assertSame(
+            ['Sign up, then make your account the admin: `php artisan auth:make-admin you@example.com`'],
+            $this->environment()->exposedDemoStep($this->command()),
+        );
+    }
+
     private function command(?string $modules = null, ?string $target = null, bool $demo = false, ?string $template = null): InstallCommand
     {
         return new class($target ?? $this->tmp, $modules, $demo, $template) extends InstallCommand
