@@ -109,7 +109,7 @@ class InstallModulesRunnerTest extends TestCase
     public function test_a_failed_step_shows_its_error(): void
     {
         Process::fake([
-            '*' => Process::result(output: "Installing...\n", errorOutput: "  saucebase/notes does not support react.\n", exitCode: 1),
+            '*' => Process::result(output: "Installing...\n", errorOutput: "  - Installing saucebase/notes (dev-dev): Extracting archive\n 0/16 [>---] 0%\n  saucebase/notes does not support react.\nrequire [--dev] [--dry-run] [<packages>...]\n", exitCode: 1),
         ]);
         $command = new class extends TestableInstallCommand
         {
@@ -147,6 +147,12 @@ class InstallModulesRunnerTest extends TestCase
 
         $this->assertFalse($command->installDefault());
         $this->assertStringContainsString('saucebase/notes does not support react.', implode("\n", $command->warnings));
+        // One way on, the install's resume command: re-running only this step would skip
+        // the build and the rest.
+        $this->assertStringNotContainsString('saucebase:template-install', implode("\n", $command->warnings));
+        $this->assertStringNotContainsString('Extracting archive', implode("\n", $command->warnings));
+        $this->assertStringNotContainsString('--dry-run', implode("\n", $command->warnings));
+        $this->assertSame('Failed at: Installing the template', $command->exposedFailureCalloutContent(null)[0]);
     }
 
     /** A template requires its own modules: nothing to look up or ask. */

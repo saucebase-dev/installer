@@ -120,6 +120,9 @@ class InstallCommand extends Command
     /** The last lines a failed step wrote, so its warning can say why. */
     protected ?string $lastFailure = null;
 
+    /** The install task that failed, named in the failure box when the driver didn't name a step. */
+    protected ?string $failedTask = null;
+
     private function remember(ProcessResult $result): bool
     {
         $this->lastFailure = $result->successful() ? null : trim($result->output()."\n".$result->errorOutput());
@@ -732,8 +735,14 @@ class InstallCommand extends Command
         if (! $ok) {
             // ANSI codes and blank lines out; the end of the output is where the reason is.
             $why = collect(explode("\n", (string) preg_replace('/\e\[[0-9;]*m/', '', (string) $this->lastFailure)))
-                ->map(fn (string $line) => trim($line))->filter()->take(-12)->implode("\n");
-            $this->components->warn("{$label} failed".($why !== '' ? ":\n{$why}\n" : '. ').'Run it again: '.implode(' ', array_diff($command, ['--no-interaction'])));
+                ->map(fn (string $line) => trim($line))->filter()
+                // Composer's progress, per-package and usage lines bury the reason.
+                ->reject(fn (string $line) => (bool) preg_match('/^(\d+\/\d+ \[|- (Installing|Downloading|Locking|Excluded)|require \[)/', $line))
+                ->take(-12)->implode("\n");
+            // The reason only: the failure box's resume command reruns this step and every
+            // one after it (the build, HTTPS); re-running this one alone would skip them.
+            $this->failedTask = $label;
+            $this->components->warn("{$label} failed".($why !== '' ? ":\n{$why}" : '.'));
         }
 
         return $ok;
@@ -829,6 +838,8 @@ class InstallCommand extends Command
     /** @return array<int, string> */
     protected function failureCalloutContent(?string $step): array
     {
+        $step ??= $this->failedTask;
+
         return array_values(array_filter([
             $step ? "Failed at: {$step}" : null,
             'Your application directory is intact — nothing was rolled back.',
