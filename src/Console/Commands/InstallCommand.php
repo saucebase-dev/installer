@@ -4,6 +4,7 @@ namespace Saucebase\Installer\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Console\View\TaskResult;
+use Illuminate\Contracts\Process\ProcessResult;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use Laravel\Prompts\Elements\Element;
@@ -111,10 +112,19 @@ class InstallCommand extends Command
      */
     public function runArtisan(array $args, int $timeout = 120): bool
     {
-        return Process::path($this->targetPath())
+        return $this->remember(Process::path($this->targetPath())
             ->timeout($timeout)
-            ->run([PHP_BINARY, $this->path('artisan'), ...$args])
-            ->successful();
+            ->run([PHP_BINARY, $this->path('artisan'), ...$args]));
+    }
+
+    /** The last lines a failed step wrote, so its warning can say why. */
+    protected ?string $lastFailure = null;
+
+    private function remember(ProcessResult $result): bool
+    {
+        $this->lastFailure = $result->successful() ? null : trim($result->output()."\n".$result->errorOutput());
+
+        return $result->successful();
     }
 
     public function getSelectedStack(): ?string
@@ -286,10 +296,9 @@ class InstallCommand extends Command
     /** @param  string[]  $command */
     public function runProcess(array $command, int $timeout = 300): bool
     {
-        return Process::path($this->targetPath())
+        return $this->remember(Process::path($this->targetPath())
             ->timeout($timeout)
-            ->run($command)
-            ->successful();
+            ->run($command));
     }
 
     /** A contributor checkout runs the UI from saucebase/core instead of owning a copy. */
@@ -721,7 +730,10 @@ class InstallCommand extends Command
         });
 
         if (! $ok) {
-            $this->components->warn("{$label} failed. Run it again to see why: ".implode(' ', array_diff($command, ['--no-interaction'])));
+            // ANSI codes and blank lines out; the end of the output is where the reason is.
+            $why = collect(explode("\n", (string) preg_replace('/\e\[[0-9;]*m/', '', (string) $this->lastFailure)))
+                ->map(fn (string $line) => trim($line))->filter()->take(-12)->implode("\n");
+            $this->components->warn("{$label} failed".($why !== '' ? ":\n{$why}\n" : '. ').'Run it again: '.implode(' ', array_diff($command, ['--no-interaction'])));
         }
 
         return $ok;

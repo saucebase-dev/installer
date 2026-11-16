@@ -2,6 +2,7 @@
 
 namespace Saucebase\Installer\Tests\Feature;
 
+use Illuminate\Support\Facades\Process;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Tests\TestCase;
 
@@ -102,6 +103,50 @@ class InstallModulesRunnerTest extends TestCase
         $this->assertSame(['php artisan saucebase:template-install saucebase/uptime --no-interaction'], $ran);
         // No accounts are seeded, so there is no password to set.
         $this->assertStringNotContainsString('DEMO_PASSWORD=', (string) @file_get_contents($this->tmp.'/.env'));
+    }
+
+    /** A failed step shows why, not only how to run it again. */
+    public function test_a_failed_step_shows_its_error(): void
+    {
+        Process::fake([
+            '*' => Process::result(output: "Installing...\n", errorOutput: "  saucebase/notes does not support react.\n", exitCode: 1),
+        ]);
+        $command = new class extends TestableInstallCommand
+        {
+            /** @var string[] */
+            public array $warnings = [];
+
+            public function installDefault(): bool
+            {
+                $warnings = &$this->warnings;
+                $this->components = new class($warnings)
+                {
+                    /** @param  string[]  $warnings */
+                    public function __construct(private array &$warnings) {}
+
+                    public function task(string $label, callable $task): void
+                    {
+                        $task();
+                    }
+
+                    public function warn(string $message): void
+                    {
+                        $this->warnings[] = $message;
+                    }
+                };
+
+                return InstallCommand::doInstallModules([]);
+            }
+
+            public function newLine($count = 1): static
+            {
+                return $this;
+            }
+        };
+        $command->fakeOptions = ['path' => $this->tmp, 'template' => 'saucebase/notes'];
+
+        $this->assertFalse($command->installDefault());
+        $this->assertStringContainsString('saucebase/notes does not support react.', implode("\n", $command->warnings));
     }
 
     /** A template requires its own modules: nothing to look up or ask. */
