@@ -143,18 +143,18 @@ abstract class Environment
                 : [];
         }
 
-        // A template's demo seeds its own accounts, and may name the one to sign in with
-        // (`extra.saucebase.demo_account`). Without a template, auth's demo admin sees everything.
+        // Each demo names the account to sign in with (`extra.saucebase.demo_account`,
+        // "email (what it sees)"). A template's demo seeds only its own; otherwise every
+        // installed module's, since the admin can't see what tenancy's owner sees.
         $template = $command->optionOrNull('template');
-        $account = match (true) {
-            $template !== null => json_decode((string) @file_get_contents($command->path('modules/'.Str::afterLast($template, '/').'/composer.json')), true)['extra']['saucebase']['demo_account'] ?? null,
-            $command->optionOrNull('demo') && is_dir($command->path('modules/auth')) => '`chef@saucebase.dev` (admin)',
-            default => null,
-        };
-
-        if (is_string($account) && $account !== '' && $template !== null) {
-            $account = "`{$account}`";
-        }
+        $folders = $template !== null
+            ? [$command->path('modules/'.Str::afterLast($template, '/'))]
+            : ($command->optionOrNull('demo') ? (glob($command->path('modules/*'), GLOB_ONLYDIR) ?: []) : []);
+        $account = collect($folders)
+            ->map(fn (string $folder) => json_decode((string) @file_get_contents($folder.'/composer.json'), true)['extra']['saucebase']['demo_account'] ?? null)
+            ->filter(fn ($account) => is_string($account) && $account !== '')
+            ->map(fn (string $account) => preg_replace('/^(\S+)/', '`$1`', $account))
+            ->implode(' or ');
 
         return [is_string($account) && $account !== ''
             ? "Sign in as {$account} with the password `{$password}`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD"
