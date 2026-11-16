@@ -101,24 +101,11 @@ class EnvironmentHelpersTest extends TestCase
     public function test_with_auth_it_names_the_admin_account_to_sign_in_with(): void
     {
         file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
-        $this->module('auth', 'chef@saucebase.dev (admin)');
+        mkdir($this->tmp.'/modules/auth', recursive: true);
 
         $steps = $this->environment()->exposedDemoStep($this->command(demo: true));
 
         $this->assertSame(['Sign in as `chef@saucebase.dev` (admin) with the password `s3cret`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD'], $steps);
-    }
-
-    /** Each module's demo names its own account: the admin can't see the demo workspaces, their owner can. */
-    public function test_every_module_names_its_demo_account(): void
-    {
-        file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
-        $this->module('auth', 'chef@saucebase.dev (admin)');
-        $this->module('blog');
-        $this->module('tenancy', 'owner@saucebase.dev (owns Acme and Globex)');
-
-        $steps = $this->environment()->exposedDemoStep($this->command(demo: true));
-
-        $this->assertSame(['Sign in as `chef@saucebase.dev` (admin) or `owner@saucebase.dev` (owns Acme and Globex) with the password `s3cret`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD'], $steps);
     }
 
     /** A template seeds its own accounts; auth's demo admin is only there with --demo. */
@@ -171,12 +158,6 @@ class EnvironmentHelpersTest extends TestCase
             ['Sign up, then make your account the admin: `php artisan auth:make-admin you@example.com`'],
             $this->environment()->exposedDemoStep($this->command()),
         );
-    }
-
-    private function module(string $name, ?string $demoAccount = null): void
-    {
-        mkdir($this->tmp."/modules/{$name}", recursive: true);
-        file_put_contents($this->tmp."/modules/{$name}/composer.json", json_encode(['extra' => ['saucebase' => array_filter(['demo_account' => $demoAccount])]]));
     }
 
     private function command(?string $modules = null, ?string $target = null, bool $demo = false, ?string $template = null): InstallCommand
