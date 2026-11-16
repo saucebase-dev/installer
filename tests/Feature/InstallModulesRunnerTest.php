@@ -109,7 +109,7 @@ class InstallModulesRunnerTest extends TestCase
     public function test_a_failed_step_shows_its_error(): void
     {
         Process::fake([
-            '*' => Process::result(output: "Installing...\n", errorOutput: "  - Installing saucebase/notes (dev-dev): Extracting archive\n 0/16 [>---] 0%\n  saucebase/notes does not support react.\nrequire [--dev] [--dry-run] [<packages>...]\n", exitCode: 1),
+            '*' => Process::result(output: "Installing...\n", errorOutput: "Loading composer repositories with package information\nPackage operations: 16 installs, 0 updates, 0 removals\n 0 [>---]\n  - Installing saucebase/notes (dev-dev): Extracting archive\n 0/16 [>---] 0%\n  saucebase/notes does not support react.\nrequire [--dev] [--dry-run] [<packages>...]\n", exitCode: 1),
         ]);
         $command = new class extends TestableInstallCommand
         {
@@ -152,6 +152,7 @@ class InstallModulesRunnerTest extends TestCase
         $this->assertStringNotContainsString('saucebase:template-install', implode("\n", $command->warnings));
         $this->assertStringNotContainsString('Extracting archive', implode("\n", $command->warnings));
         $this->assertStringNotContainsString('--dry-run', implode("\n", $command->warnings));
+        $this->assertStringNotContainsString('Package operations', implode("\n", $command->warnings));
         $this->assertSame('Failed at: Installing the template', $command->exposedFailureCalloutContent(null)[0]);
     }
 

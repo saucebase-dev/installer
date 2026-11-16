@@ -737,7 +737,7 @@ class InstallCommand extends Command
             $why = collect(explode("\n", (string) preg_replace('/\e\[[0-9;]*m/', '', (string) $this->lastFailure)))
                 ->map(fn (string $line) => trim($line))->filter()
                 // Composer's progress, per-package and usage lines bury the reason.
-                ->reject(fn (string $line) => (bool) preg_match('/^(\d+\/\d+ \[|- (Installing|Downloading|Locking|Excluded)|require \[)/', $line))
+                ->reject(fn (string $line) => (bool) preg_match('/^(\d+(\/\d+)? \[|- (Installing|Downloading|Locking|Excluded)|require \[|Loading composer|Updating dependencies|Lock file operations|Writing lock file|Installing dependencies|Package operations|Generating .*autoload)/', $line))
                 ->take(-12)->implode("\n");
             // The reason only: the failure box's resume command reruns this step and every
             // one after it (the build, HTTPS); re-running this one alone would skip them.
