@@ -3,7 +3,6 @@
 namespace Saucebase\Installer\Environments;
 
 use Illuminate\Support\Facades\Process;
-use Illuminate\Support\Str;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 
 abstract class Environment
@@ -89,6 +88,18 @@ abstract class Environment
         return $command->runArtisan($args);
     }
 
+    /**
+     * An artisan command's output, or null when it fails.
+     *
+     * @param  string[]  $args
+     */
+    protected function artisanOutput(InstallCommand $command, array $args): ?string
+    {
+        $result = Process::path($command->targetPath())->timeout(120)->run([PHP_BINARY, $command->path('artisan'), ...$args]);
+
+        return $result->successful() ? $result->output() : null;
+    }
+
     /** Record which step failed, then return FAILURE for boot() to propagate. */
     protected function fail(string $step): int
     {
@@ -143,22 +154,23 @@ abstract class Environment
                 : [];
         }
 
-        // A template's demo seeds its own accounts, and may name the one to sign in with
-        // (`extra.saucebase.demo_account`). Without a template, auth's demo admin sees everything.
-        $template = $command->optionOrNull('template');
-        $account = match (true) {
-            $template !== null => json_decode((string) @file_get_contents($command->path('modules/'.Str::afterLast($template, '/').'/composer.json')), true)['extra']['saucebase']['demo_account'] ?? null,
-            $command->optionOrNull('demo') && is_dir($command->path('modules/auth')) => '`chef@saucebase.dev` (admin)',
-            default => null,
-        };
+        // The state that was seeded: a template's demo is its `default`, a module demo the
+        // `showcase`. Its seeders declare their accounts (#[DemoAccount]); the featured
+        // ones are where to start.
+        $state = $command->optionOrNull('state')
+            ?: ($command->optionOrNull('demo') ? ($command->optionOrNull('template') ? 'default' : 'showcase') : null);
+        $featured = $state === null ? [] : array_values(array_filter(
+            json_decode((string) $this->artisanOutput($command, ['modules:demo-accounts', "--state={$state}", '--json']), true) ?: [],
+            fn (array $account): bool => (bool) ($account['featured'] ?? false),
+        ));
 
-        if (is_string($account) && $account !== '' && $template !== null) {
-            $account = "`{$account}`";
+        if ($featured === []) {
+            return ["Demo accounts use the password `{$password}`, saved in .env as DEMO_PASSWORD"];
         }
 
-        return [is_string($account) && $account !== ''
-            ? "Sign in as {$account} with the password `{$password}`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD"
-            : "Demo accounts use the password `{$password}`, saved in .env as DEMO_PASSWORD"];
+        $accounts = implode(' or ', array_map(fn (array $account): string => "`{$account['email']}` ({$account['description']})", $featured));
+
+        return ["Sign in as {$accounts} with the password `{$password}`, saved in .env as DEMO_PASSWORD. Every demo account: `php artisan modules:demo-accounts --state={$state}`"];
     }
 
     /** Hook: perform driver-specific steps before the module prompt. Return an exit code to abort, null to continue. */

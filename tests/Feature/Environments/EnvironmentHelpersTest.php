@@ -98,47 +98,54 @@ class EnvironmentHelpersTest extends TestCase
         $this->assertStringContainsString('`s3cret`', $steps[0]);
     }
 
-    public function test_with_auth_it_names_the_admin_account_to_sign_in_with(): void
+    /** The accounts come from the app: what the state's seeders declare (`modules:demo-accounts`). */
+    public function test_a_demo_names_its_featured_accounts_to_sign_in_with(): void
     {
         file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
-        mkdir($this->tmp.'/modules/auth', recursive: true);
+        $environment = $this->environment([
+            ['module' => 'auth', 'email' => 'chef@saucebase.dev', 'description' => 'admin, sees everything', 'featured' => true],
+            ['module' => 'auth', 'email' => 'support@saucebase.dev', 'description' => 'support staff', 'featured' => false],
+            ['module' => 'tenancy', 'email' => 'owner@saucebase.dev', 'description' => 'owns Acme and Globex', 'featured' => true],
+        ]);
 
-        $steps = $this->environment()->exposedDemoStep($this->command(demo: true));
+        $steps = $environment->exposedDemoStep($this->command(demo: true));
 
-        $this->assertSame(['Sign in as `chef@saucebase.dev` (admin) with the password `s3cret`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD'], $steps);
+        $this->assertSame(['--state=showcase'], array_values(array_filter($environment->asked, fn (string $arg) => str_starts_with($arg, '--state'))));
+        $this->assertSame(['Sign in as `chef@saucebase.dev` (admin, sees everything) or `owner@saucebase.dev` (owns Acme and Globex) with the password `s3cret`, saved in .env as DEMO_PASSWORD. Every demo account: `php artisan modules:demo-accounts --state=showcase`'], $steps);
     }
 
-    /** A template seeds its own accounts; auth's demo admin is only there with --demo. */
-    public function test_a_template_without_demo_content_names_no_admin_account(): void
+    /** A template's demo is its default state, and names the template's own account. */
+    public function test_a_template_demo_names_the_templates_own_account(): void
     {
         file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
-        mkdir($this->tmp.'/modules/auth', recursive: true);
+        $environment = $this->environment([
+            ['module' => 'uptime', 'email' => 'uptime@saucebase.dev', 'description' => 'owns the demo sites', 'featured' => true],
+        ]);
 
-        $steps = $this->environment()->exposedDemoStep($this->command(template: 'saucebase/uptime'));
+        $steps = $environment->exposedDemoStep($this->command(demo: true, template: 'saucebase/uptime'));
+
+        $this->assertContains('--state=default', $environment->asked);
+        $this->assertSame(['Sign in as `uptime@saucebase.dev` (owns the demo sites) with the password `s3cret`, saved in .env as DEMO_PASSWORD. Every demo account: `php artisan modules:demo-accounts --state=default`'], $steps);
+    }
+
+    public function test_a_demo_that_features_no_account_gives_the_password_only(): void
+    {
+        file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
+
+        $steps = $this->environment([])->exposedDemoStep($this->command(demo: true, template: 'saucebase/uptime'));
 
         $this->assertSame(['Demo accounts use the password `s3cret`, saved in .env as DEMO_PASSWORD'], $steps);
     }
 
-    /** A template's demo seeds its own accounts: auth's admin is not among them. */
-    public function test_a_template_demo_names_the_templates_own_account(): void
+    /** Without a demo nothing was seeded: no accounts to look up, only the password. */
+    public function test_a_template_without_demo_content_names_no_account(): void
     {
         file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
-        mkdir($this->tmp.'/modules/auth', recursive: true);
-        mkdir($this->tmp.'/modules/uptime', recursive: true);
-        file_put_contents($this->tmp.'/modules/uptime/composer.json', json_encode(['extra' => ['saucebase' => ['demo_account' => 'uptime@saucebase.dev']]]));
+        $environment = $this->environment([['module' => 'auth', 'email' => 'chef@saucebase.dev', 'description' => 'admin', 'featured' => true]]);
 
-        $steps = $this->environment()->exposedDemoStep($this->command(demo: true, template: 'saucebase/uptime'));
+        $steps = $environment->exposedDemoStep($this->command(template: 'saucebase/uptime'));
 
-        $this->assertSame(['Sign in as `uptime@saucebase.dev` with the password `s3cret`. Every demo account uses it; it is saved in .env as DEMO_PASSWORD'], $steps);
-    }
-
-    public function test_a_template_demo_without_a_named_account_gives_the_password_only(): void
-    {
-        file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
-        mkdir($this->tmp.'/modules/auth', recursive: true);
-
-        $steps = $this->environment()->exposedDemoStep($this->command(demo: true, template: 'saucebase/uptime'));
-
+        $this->assertSame([], $environment->asked);
         $this->assertSame(['Demo accounts use the password `s3cret`, saved in .env as DEMO_PASSWORD'], $steps);
     }
 
@@ -196,10 +203,24 @@ class EnvironmentHelpersTest extends TestCase
         };
     }
 
-    private function environment(): NativeEnvironment
+    /** @param  list<array<string, mixed>>  $accounts  What `modules:demo-accounts --json` answers. */
+    private function environment(array $accounts = []): NativeEnvironment
     {
-        return new class extends NativeEnvironment
+        return new class($accounts) extends NativeEnvironment
         {
+            /** @var string[] The artisan arguments asked for. */
+            public array $asked = [];
+
+            /** @param  list<array<string, mixed>>  $accounts */
+            public function __construct(private array $accounts) {}
+
+            protected function artisanOutput(InstallCommand $command, array $args): ?string
+            {
+                $this->asked = $args;
+
+                return (string) json_encode($this->accounts);
+            }
+
             public function exposedReadEnvValue(InstallCommand $command, string $key): ?string
             {
                 return $this->readEnvValue($command, $key);

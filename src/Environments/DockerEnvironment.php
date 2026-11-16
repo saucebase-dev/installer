@@ -831,6 +831,13 @@ class DockerEnvironment extends Environment
         return $this->execInContainer($command, ['php', 'artisan', ...$args], quiet: true);
     }
 
+    protected function artisanOutput(InstallCommand $command, array $args): ?string
+    {
+        $result = Process::path($command->targetPath())->timeout(120)->run(['docker', 'compose', 'exec', '-T', 'app', 'php', 'artisan', ...$args]);
+
+        return $result->successful() ? $result->output() : null;
+    }
+
     protected function clearCaches(InstallCommand $command): void
     {
         $command->info('Clearing caches...');
