@@ -557,56 +557,41 @@ class StackCommandTest extends TestCase
         $this->assertSame('uptime', $data['template']);
     }
 
-    /** Core's CSS and view, then the template's own over them, for the stack chosen. */
-    public function test_a_template_workspace_gets_the_templates_css_and_view(): void
+    /**
+     * The template's own files (CSS, page shell, tsconfig) are core's business: the stack
+     * command only points at the core command that puts them back for the stack chosen.
+     */
+    public function test_a_template_workspace_is_told_to_restore_its_stubs(): void
     {
         $this->seedFakeStubs('react');
         $this->seedFakeTemplate();
 
-        $this->artisan('stack react --dev')->assertSuccessful();
-
-        $this->assertSame('/* uptime */', file_get_contents($this->tmpDir.'/resources/css/theme.css'));
-        $this->assertSame(self::APP_CSS, file_get_contents($this->tmpDir.'/resources/css/app.css'));
-        $this->assertSame('react shell', file_get_contents($this->tmpDir.'/resources/views/app.blade.php'));
+        $this->artisan('stack react --dev')
+            ->assertSuccessful()
+            ->expectsOutputToContain('php artisan saucebase:template-capture --restore');
     }
 
-    /** Vite reads the template's own UI before core's; type-checking has to as well. */
-    public function test_a_template_workspace_type_checks_its_own_files_first(): void
-    {
-        $this->seedFakeStubs('react');
-        $this->seedFakeTemplate();
-
-        $this->artisan('stack react --dev')->assertSuccessful();
-
-        $tsconfig = json_decode(file_get_contents($this->tmpDir.'/tsconfig.json'), true);
-        $this->assertSame(
-            ['./resources/js/react/*', './vendor/saucebase/core/stubs/stack/react/js/*'],
-            $tsconfig['compilerOptions']['paths']['@/*'],
-        );
-        $this->assertContains('resources/js/react/**/*', $tsconfig['include']);
-    }
-
-    /** A plain checkout keeps core's config as it is. */
-    public function test_a_plain_checkout_keeps_cores_tsconfig(): void
-    {
-        $this->seedFakeStubs('react');
-
-        $this->artisan('stack react --dev')->assertSuccessful();
-
-        $this->assertSame(
-            file_get_contents($this->tmpDir.'/vendor/saucebase/core/stubs/stack/react/config/tsconfig.json'),
-            file_get_contents($this->tmpDir.'/tsconfig.json'),
-        );
-    }
-
-    /** The template's CSS is where the stack starts from, not an edit to rescue. */
-    public function test_reset_needs_no_force_for_the_templates_own_css(): void
+    /** A template's CSS belongs in its stubs, never in core: --sync is the wrong way out. */
+    public function test_a_template_workspace_with_css_changes_is_sent_to_capture_not_sync(): void
     {
         $this->seedFakeStubs('vue');
         $this->seedFakeTemplate();
         $this->artisan('stack vue --dev')->assertSuccessful();
+        file_put_contents($this->tmpDir.'/resources/css/app.css', '/* the template\'s */');
 
-        $this->artisan('stack --reset')->assertSuccessful();
+        $this->artisan('stack --reset')
+            ->assertFailed()
+            ->expectsOutputToContain('php artisan saucebase:template-capture')
+            ->doesntExpectOutputToContain('--sync');
+    }
+
+    public function test_a_plain_checkout_is_not_told_to_restore_stubs(): void
+    {
+        $this->seedFakeStubs('react');
+
+        $this->artisan('stack react --dev')
+            ->assertSuccessful()
+            ->doesntExpectOutputToContain('template-capture');
     }
 
     // -------------------------------------------------------------------------
@@ -616,15 +601,6 @@ class StackCommandTest extends TestCase
     private function seedFakeTemplate(): void
     {
         file_put_contents($this->tmpDir.'/saucebase.json', json_encode(['framework' => null, 'template' => 'uptime']).PHP_EOL);
-
-        $stubs = $this->tmpDir.'/modules/uptime/stubs/resources';
-        $this->files->ensureDirectoryExists($stubs.'/css');
-        file_put_contents($stubs.'/css/theme.css', '/* uptime */');
-
-        foreach (['vue', 'react'] as $framework) {
-            $this->files->ensureDirectoryExists($stubs."/views/{$framework}");
-            file_put_contents($stubs."/views/{$framework}/app.blade.php", "{$framework} shell");
-        }
     }
 
     private function seedFakeViewStub(string $framework, string $entry): void
