@@ -112,6 +112,7 @@ class StackCommand extends Command
         $this->copyLockFile($framework);
         $this->copyViewFiles($framework);
         $this->copyCss();
+        $this->copyTemplateFiles($framework);
 
         $ext = $this->appExtension($framework);
         $source = '../../'.self::CORE_STACK."/{$framework}/js";
@@ -148,6 +149,9 @@ class StackCommand extends Command
 
         $this->info("Resetting framework '{$framework}'...");
 
+        // What the workspace set itself (the template it builds, say) outlives the stack.
+        $kept = array_diff_key($this->projectJson(), array_flip(['framework', 'contributor']));
+
         $this->restoreTrackedFiles($framework);
 
         foreach ($this->generatedFiles($framework) as $file) {
@@ -166,6 +170,13 @@ class StackCommand extends Command
         $lockfile = $this->basePath.'/'.self::LOCKFILE;
         if ($this->files->exists($lockfile)) {
             $this->files->delete($lockfile);
+        }
+
+        if ($kept !== []) {
+            $this->files->put(
+                $this->basePath.'/saucebase.json',
+                json_encode([...$this->projectJson(), ...$kept], JSON_PRETTY_PRINT).PHP_EOL,
+            );
         }
 
         $this->info('Reset complete. Run: npm install to restore base dependencies.');
@@ -209,6 +220,58 @@ class StackCommand extends Command
         $this->files->copyDirectory($this->coreCssDir(), $this->cssDir());
 
         $this->rememberCss();
+    }
+
+    /**
+     * A workspace building a template ("template" in saucebase.json) runs with the template's
+     * CSS and page shell, as an app installed from it does: its stubs, copied over core's.
+     * Remembered as the starting CSS, so a later --reset doesn't take them for edits.
+     */
+    private function copyTemplateFiles(string $framework): void
+    {
+        $template = $this->projectJson()['template'] ?? null;
+
+        if (! is_string($template) || $template === '') {
+            return;
+        }
+
+        $stubs = $this->basePath."/modules/{$template}/stubs/resources";
+
+        if ($this->files->isDirectory($stubs.'/css')) {
+            $this->files->copyDirectory($stubs.'/css', $this->cssDir());
+            $this->rememberCss();
+        }
+
+        foreach (self::VIEW_FILES as $filename) {
+            $view = $stubs."/views/{$framework}/{$filename}";
+
+            if ($this->files->exists($view)) {
+                $this->files->copy($view, $this->basePath.'/resources/views/'.$filename);
+            }
+        }
+
+        $this->typeCheckTemplateFilesFirst($framework);
+    }
+
+    /**
+     * Vite reads the template's UI from resources/js/<framework> before core's; the type
+     * checker is pointed the same way, so it sees the files that actually run.
+     */
+    private function typeCheckTemplateFilesFirst(string $framework): void
+    {
+        $path = $this->basePath.'/tsconfig.json';
+        $tsconfig = $this->files->exists($path) ? json_decode($this->files->get($path), true) : null;
+
+        if (! is_array($tsconfig)) {
+            return;
+        }
+
+        $own = "./resources/js/{$framework}/*";
+        $paths = $tsconfig['compilerOptions']['paths']['@/*'] ?? [];
+        $tsconfig['compilerOptions']['paths']['@/*'] = [$own, ...array_diff($paths, [$own])];
+        $tsconfig['include'] = array_values(array_unique([...($tsconfig['include'] ?? []), "resources/js/{$framework}/**/*"]));
+
+        $this->files->put($path, json_encode($tsconfig, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES).PHP_EOL);
     }
 
     /** Whether resources/css differs from what was copied out of core. */

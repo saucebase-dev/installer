@@ -540,8 +540,92 @@ class StackCommandTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Template workspace ("template" in saucebase.json)
+    // -------------------------------------------------------------------------
+
+    /** The workspace builds a template: switching stacks must not forget which. */
+    public function test_reset_keeps_the_template_the_workspace_builds(): void
+    {
+        $this->seedFakeStubs('vue');
+        $this->seedFakeTemplate();
+        $this->artisan('stack vue --dev')->assertSuccessful();
+
+        $this->artisan('stack --reset')->assertSuccessful();
+
+        $data = json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true);
+        $this->assertNull($data['framework']);
+        $this->assertSame('uptime', $data['template']);
+    }
+
+    /** Core's CSS and view, then the template's own over them, for the stack chosen. */
+    public function test_a_template_workspace_gets_the_templates_css_and_view(): void
+    {
+        $this->seedFakeStubs('react');
+        $this->seedFakeTemplate();
+
+        $this->artisan('stack react --dev')->assertSuccessful();
+
+        $this->assertSame('/* uptime */', file_get_contents($this->tmpDir.'/resources/css/theme.css'));
+        $this->assertSame(self::APP_CSS, file_get_contents($this->tmpDir.'/resources/css/app.css'));
+        $this->assertSame('react shell', file_get_contents($this->tmpDir.'/resources/views/app.blade.php'));
+    }
+
+    /** Vite reads the template's own UI before core's; type-checking has to as well. */
+    public function test_a_template_workspace_type_checks_its_own_files_first(): void
+    {
+        $this->seedFakeStubs('react');
+        $this->seedFakeTemplate();
+
+        $this->artisan('stack react --dev')->assertSuccessful();
+
+        $tsconfig = json_decode(file_get_contents($this->tmpDir.'/tsconfig.json'), true);
+        $this->assertSame(
+            ['./resources/js/react/*', './vendor/saucebase/core/stubs/stack/react/js/*'],
+            $tsconfig['compilerOptions']['paths']['@/*'],
+        );
+        $this->assertContains('resources/js/react/**/*', $tsconfig['include']);
+    }
+
+    /** A plain checkout keeps core's config as it is. */
+    public function test_a_plain_checkout_keeps_cores_tsconfig(): void
+    {
+        $this->seedFakeStubs('react');
+
+        $this->artisan('stack react --dev')->assertSuccessful();
+
+        $this->assertSame(
+            file_get_contents($this->tmpDir.'/vendor/saucebase/core/stubs/stack/react/config/tsconfig.json'),
+            file_get_contents($this->tmpDir.'/tsconfig.json'),
+        );
+    }
+
+    /** The template's CSS is where the stack starts from, not an edit to rescue. */
+    public function test_reset_needs_no_force_for_the_templates_own_css(): void
+    {
+        $this->seedFakeStubs('vue');
+        $this->seedFakeTemplate();
+        $this->artisan('stack vue --dev')->assertSuccessful();
+
+        $this->artisan('stack --reset')->assertSuccessful();
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    private function seedFakeTemplate(): void
+    {
+        file_put_contents($this->tmpDir.'/saucebase.json', json_encode(['framework' => null, 'template' => 'uptime']).PHP_EOL);
+
+        $stubs = $this->tmpDir.'/modules/uptime/stubs/resources';
+        $this->files->ensureDirectoryExists($stubs.'/css');
+        file_put_contents($stubs.'/css/theme.css', '/* uptime */');
+
+        foreach (['vue', 'react'] as $framework) {
+            $this->files->ensureDirectoryExists($stubs."/views/{$framework}");
+            file_put_contents($stubs."/views/{$framework}/app.blade.php", "{$framework} shell");
+        }
+    }
 
     private function seedFakeViewStub(string $framework, string $entry): void
     {
@@ -556,7 +640,7 @@ class StackCommandTest extends TestCase
         $this->files->ensureDirectoryExists($stubDir);
 
         file_put_contents($stubDir.'/vite.config.js', "import { saucebase } from './vendor/saucebase/core/resources/js/{$framework}/vite.ts';");
-        file_put_contents($stubDir.'/tsconfig.json', "{\"paths\": {\"@/*\": [\"./vendor/saucebase/core/stubs/stack/{$framework}/js/*\"]}}");
+        file_put_contents($stubDir.'/tsconfig.json', "{\"compilerOptions\": {\"paths\": {\"@/*\": [\"./vendor/saucebase/core/stubs/stack/{$framework}/js/*\"]}}, \"include\": [\"resources/js/*.ts\"]}");
         file_put_contents($stubDir.'/package.json', '{}');
         file_put_contents($stubDir.'/package-lock.json', '{}');
         file_put_contents($stubDir.'/eslint.config.js', '// eslint');
