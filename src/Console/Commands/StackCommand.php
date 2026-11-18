@@ -112,7 +112,6 @@ class StackCommand extends Command
         $this->copyLockFile($framework);
         $this->copyViewFiles($framework);
         $this->copyCss();
-        $this->copyTemplateFiles($framework);
 
         $ext = $this->appExtension($framework);
         $source = '../../'.self::CORE_STACK."/{$framework}/js";
@@ -126,6 +125,11 @@ class StackCommand extends Command
         }
 
         $this->info("Framework set to {$framework} (dev mode)");
+
+        // A template's own files (CSS, page shell, tsconfig) are core's to put back, not this command's.
+        if (is_string($this->projectJson()['template'] ?? null)) {
+            $this->line('Template workspace: run `php artisan saucebase:template-capture --restore` to put its files back for this stack.');
+        }
 
         return self::SUCCESS;
     }
@@ -141,8 +145,12 @@ class StackCommand extends Command
         }
 
         if ($this->cssEdited() && ! $this->option('force')) {
-            $this->error('resources/css has changes that are not in saucebase/core. Run `saucebase stack --sync` '
-                .'to keep them, or `saucebase stack --reset --force` to discard them.');
+            // A template's CSS belongs in its stubs, never in core: --sync would push it there.
+            $this->error(is_string($this->projectJson()['template'] ?? null)
+                ? 'resources/css differs from saucebase/core. Keep template changes with `php artisan saucebase:template-capture`, '
+                    .'then run `saucebase stack --reset --force`.'
+                : 'resources/css has changes that are not in saucebase/core. Run `saucebase stack --sync` '
+                    .'to keep them, or `saucebase stack --reset --force` to discard them.');
 
             return self::FAILURE;
         }
@@ -220,58 +228,6 @@ class StackCommand extends Command
         $this->files->copyDirectory($this->coreCssDir(), $this->cssDir());
 
         $this->rememberCss();
-    }
-
-    /**
-     * A workspace building a template ("template" in saucebase.json) runs with the template's
-     * CSS and page shell, as an app installed from it does: its stubs, copied over core's.
-     * Remembered as the starting CSS, so a later --reset doesn't take them for edits.
-     */
-    private function copyTemplateFiles(string $framework): void
-    {
-        $template = $this->projectJson()['template'] ?? null;
-
-        if (! is_string($template) || $template === '') {
-            return;
-        }
-
-        $stubs = $this->basePath."/modules/{$template}/stubs/resources";
-
-        if ($this->files->isDirectory($stubs.'/css')) {
-            $this->files->copyDirectory($stubs.'/css', $this->cssDir());
-            $this->rememberCss();
-        }
-
-        foreach (self::VIEW_FILES as $filename) {
-            $view = $stubs."/views/{$framework}/{$filename}";
-
-            if ($this->files->exists($view)) {
-                $this->files->copy($view, $this->basePath.'/resources/views/'.$filename);
-            }
-        }
-
-        $this->typeCheckTemplateFilesFirst($framework);
-    }
-
-    /**
-     * Vite reads the template's UI from resources/js/<framework> before core's; the type
-     * checker is pointed the same way, so it sees the files that actually run.
-     */
-    private function typeCheckTemplateFilesFirst(string $framework): void
-    {
-        $path = $this->basePath.'/tsconfig.json';
-        $tsconfig = $this->files->exists($path) ? json_decode($this->files->get($path), true) : null;
-
-        if (! is_array($tsconfig)) {
-            return;
-        }
-
-        $own = "./resources/js/{$framework}/*";
-        $paths = $tsconfig['compilerOptions']['paths']['@/*'] ?? [];
-        $tsconfig['compilerOptions']['paths']['@/*'] = [$own, ...array_diff($paths, [$own])];
-        $tsconfig['include'] = array_values(array_unique([...($tsconfig['include'] ?? []), "resources/js/{$framework}/**/*"]));
-
-        $this->files->put($path, json_encode($tsconfig, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES).PHP_EOL);
     }
 
     /** Whether resources/css differs from what was copied out of core. */
