@@ -29,6 +29,16 @@ class InstallCommandIdentityTest extends TestCase
         $this->assertStringContainsString('APP_SLUG=my-app', $result);
     }
 
+    /** Whatever the name holds reaches .env as written: no regex backreferences, quotes escaped for dotenv. */
+    public function test_an_app_name_with_dollars_or_quotes_is_written_as_typed(): void
+    {
+        $command = new TestableInstallCommand;
+
+        $this->assertStringContainsString('APP_NAME="Shop $0 \\\\1"', $command->exposedApplyIdentityToEnv("APP_NAME=Laravel\n", 'Shop $0 \1', 'shop', 'localhost', false));
+        $this->assertStringContainsString('APP_NAME="Joe \"Big\" Shop"', $command->exposedApplyIdentityToEnv("APP_NAME=Laravel\n", 'Joe "Big" Shop', 'joe', 'localhost', false));
+        $this->assertSame("KEY=a\$0b\n", InstallCommand::setEnvLine("KEY=old\n", 'KEY', 'a$0b'));
+    }
+
     public function test_names_a_plain_laravel_app_after_its_directory(): void
     {
         $result = $this->apply("APP_NAME=Laravel\n");
