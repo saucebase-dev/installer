@@ -61,6 +61,45 @@ class NewCommandTest extends TestCase
         $this->assertNull($this->command([])->exposedSsl(new NativeEnvironment));
     }
 
+    /** Herd secures with `herd secure`: a machine without mkcert still gets its HTTPS app. */
+    public function test_herd_does_not_need_mkcert(): void
+    {
+        $herd = new class extends HerdEnvironment
+        {
+            public function missingPrerequisites(): array
+            {
+                return [];
+            }
+
+            public function hasCommand(string $name): bool
+            {
+                return $name !== 'mkcert';
+            }
+        };
+        $this->bindCommand(new class($herd) extends NewCommand
+        {
+            public function __construct(private Environment $herd)
+            {
+                parent::__construct();
+            }
+
+            protected function resolveDriver(string $name): Environment
+            {
+                return $this->herd;
+            }
+
+            // The step after the SSL check: reaching it is the point.
+            protected function resolveDomain(string $name, Environment $driver): string
+            {
+                throw new \RuntimeException('past the SSL check');
+            }
+        });
+
+        $this->expectExceptionMessage('past the SSL check');
+
+        $this->artisan('new acme --driver=herd --stack=vue --modules=none -n');
+    }
+
     public function test_the_folder_defaults_to_the_app_name_as_a_slug(): void
     {
         // The app's name, then Enter to take the folder it suggests.
