@@ -63,6 +63,23 @@ class InstallCommandResumeTest extends TestCase
         $this->assertStringContainsString('--force', $resume);
     }
 
+    /** A name typed once is not lost on resume, whatever it holds: quoted for the shell. */
+    public function test_resume_command_keeps_the_app_name_quoted(): void
+    {
+        $resume = $this->command(['path' => '/tmp/app', 'app-name' => "Joe's \$hop"])->resumeCommand();
+
+        $this->assertStringContainsString("--app-name='Joe'\\''s \$hop'", $resume);
+    }
+
+    /** Herd's `--ssl=no` came from the command line; the driver doesn't add it, so the command must. */
+    public function test_resume_command_keeps_an_ssl_choice_the_driver_does_not_carry(): void
+    {
+        $resume = $this->command(['path' => '/tmp/app', 'ssl' => 'no'])->resumeCommand(['--driver' => 'herd']);
+
+        $this->assertStringContainsString('--ssl=no', $resume);
+        $this->assertSame(1, substr_count($this->command(['path' => '/tmp/app', 'ssl' => 'no'])->resumeCommand(['--driver' => 'docker', '--ssl' => 'no']), '--ssl='));
+    }
+
     public function test_resume_command_keeps_the_template_and_its_state(): void
     {
         $resume = $this->command(['path' => '/tmp/app', 'template' => 'saucebase/uptime', 'state' => 'agency'])->resumeCommand();

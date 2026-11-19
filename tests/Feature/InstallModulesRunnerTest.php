@@ -105,6 +105,54 @@ class InstallModulesRunnerTest extends TestCase
         $this->assertStringNotContainsString('DEMO_PASSWORD=', (string) @file_get_contents($this->tmp.'/.env'));
     }
 
+    /** Installing Saucebase and the migrations fail the same way as a module: with the reason. */
+    public function test_a_failed_core_install_or_migration_shows_its_error(): void
+    {
+        Process::fake(['*' => Process::result(errorOutput: "SQLSTATE[HY000] [2002] Connection refused\n", exitCode: 1)]);
+        $command = new class extends TestableInstallCommand
+        {
+            /** @var string[] */
+            public array $warnings = [];
+
+            public function attempt(string $step): bool
+            {
+                $warnings = &$this->warnings;
+                $this->components = new class($warnings)
+                {
+                    /** @param  string[]  $warnings */
+                    public function __construct(private array &$warnings) {}
+
+                    public function task(string $label, callable $task): void
+                    {
+                        $task();
+                    }
+
+                    public function warn(string $message): void
+                    {
+                        $this->warnings[] = $message;
+                    }
+                };
+
+                return $step === 'core' ? $this->installSaucebase() : $this->setupDatabase();
+            }
+
+            public function newLine($count = 1): static
+            {
+                return $this;
+            }
+        };
+        $command->fakeOptions = ['path' => $this->tmp];
+        $command->setSelectedStack('vue');
+
+        foreach (['core' => 'Installing Saucebase', 'database' => 'Running migrations'] as $step => $label) {
+            $command->warnings = [];
+
+            $this->assertFalse($command->attempt($step));
+            $this->assertStringContainsString('Connection refused', implode("\n", $command->warnings));
+            $this->assertSame("Failed at: {$label}", $command->exposedFailureCalloutContent(null)[0]);
+        }
+    }
+
     /** A failed step shows why, not only how to run it again. */
     public function test_a_failed_step_shows_its_error(): void
     {

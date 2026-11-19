@@ -343,12 +343,7 @@ class InstallCommand extends Command
 
         $this->generateApplicationKey();
 
-        $installed = false;
-        $this->task('Installing Saucebase', function () use (&$installed) {
-            return $installed = $this->installCore();
-        });
-
-        if (! $installed) {
+        if (! $this->installSaucebase()) {
             return self::FAILURE;
         }
 
@@ -515,16 +510,23 @@ class InstallCommand extends Command
             }
         }
 
+        // Read before APP_HOST is overwritten: a URL on the host chosen last time is ours.
+        $previousHost = self::readEnvLine($env, 'APP_HOST');
+
         // Always authoritative: the certificate and nginx config are generated from the
         // resolved domain, so APP_HOST must agree with them. A user's own value is not
         // lost — it is what captureDomain() offers as the prompt default.
         $env = self::setEnvLine($env, 'APP_HOST', $host);
 
-        // Native serves on whatever laravel/installer already wrote for localhost
-        // (http://localhost:8000, which is what `composer dev` binds); only a custom
-        // host needs correcting here.
-        if ($native && $host !== 'localhost') {
-            $env = self::setEnvLine($env, 'APP_URL', 'http://'.$host);
+        // Only a URL the installer wrote follows the host, keeping its scheme and port: native's
+        // localhost one is laravel/installer's http://localhost:8000, what `composer dev` binds.
+        // Docker's localhost URL is applyDockerEnvDefaults()'s, which also sets scheme and port.
+        $url = self::readEnvLine($env, 'APP_URL');
+        $urlHost = $url === null ? null : parse_url($url, PHP_URL_HOST);
+        $ours = array_filter([$native ? 'localhost' : null, $previousHost]);
+
+        if (is_string($urlHost) && $urlHost !== $host && in_array($urlHost, $ours, true)) {
+            $env = self::setEnvLine($env, 'APP_URL', (string) preg_replace('#^(https?://)[^/:]+#', '${1}'.$host, $url));
         }
 
         return $env;
@@ -581,18 +583,19 @@ class InstallCommand extends Command
         });
     }
 
+    /** Composer and core's own install; a failure says why, like every install step. */
+    protected function installSaucebase(): bool
+    {
+        return $this->runInstallTask('Installing Saucebase', [], fn () => $this->installCore());
+    }
+
     protected function setupDatabase(): bool
     {
         $fresh = $this->option('fresh');
         $label = $fresh ? 'Running migrate:fresh --seed' : 'Running migrations';
         $command = $fresh ? 'migrate:fresh' : 'migrate';
-        $ok = false;
 
-        $this->task($label, function () use ($command, &$ok) {
-            return $ok = $this->runArtisan([$command, '--seed', '--force'], 300);
-        });
-
-        return $ok;
+        return $this->runInstallTask($label, [$command, '--seed', '--force'], fn (array $args) => $this->runArtisan($args, 300));
     }
 
     /** False when a selected module could not be wired into the application. */
@@ -867,8 +870,18 @@ class InstallCommand extends Command
             $command .= ' '.$this->selectedStack;
         }
 
+        // Herd's choice is only on the command line; Docker's comes back resolved.
+        if (! isset($resumeOptions['--ssl']) && ($ssl = $this->optionOrNull('ssl'))) {
+            $resumeOptions['--ssl'] = $ssl;
+        }
+
         foreach ($resumeOptions as $option => $value) {
             $command .= " {$option}={$value}";
+        }
+
+        // Free text: quoted, so a name with spaces or quotes survives the shell.
+        if ($name = $this->optionOrNull('app-name')) {
+            $command .= ' --app-name='.escapeshellarg($name);
         }
 
         if ($this->domain !== null) {

@@ -112,8 +112,28 @@ class InstallCommandIdentityTest extends TestCase
         $localhost = $this->apply("APP_URL=http://localhost:8000\n", native: true);
         $this->assertStringContainsString('APP_URL=http://localhost:8000', $localhost);
 
+        // A custom host keeps the port `composer dev` serves on.
         $custom = $this->apply("APP_URL=http://localhost:8000\n", host: 'my-app.test', native: true);
-        $this->assertStringContainsString('APP_URL=http://my-app.test', $custom);
+        $this->assertStringContainsString("APP_URL=http://my-app.test:8000\n", $custom);
+    }
+
+    /** The URL on the host the installer chose last time is the installer's: it follows a new host. */
+    public function test_a_reinstall_with_a_new_host_moves_the_installers_own_url(): void
+    {
+        $native = $this->apply("APP_HOST=old.test\nAPP_URL=http://old.test:8000\n", host: 'new.test', native: true);
+        $this->assertStringContainsString("APP_URL=http://new.test:8000\n", $native);
+
+        // Docker: the host moves here; applyDockerEnvDefaults() then sets scheme and port for it.
+        $docker = $this->apply("APP_HOST=old.test\nAPP_URL=https://old.test:8443\n", host: 'new.test', native: false);
+        $this->assertStringContainsString("APP_URL=https://new.test:8443\n", $docker);
+    }
+
+    public function test_a_url_the_user_set_is_left_alone(): void
+    {
+        $env = "APP_HOST=old.test\nAPP_URL=https://mine.example\n";
+
+        $this->assertStringContainsString("APP_URL=https://mine.example\n", $this->apply($env, host: 'new.test', native: true));
+        $this->assertStringContainsString("APP_URL=https://mine.example\n", $this->apply($env, host: 'new.test', native: false));
     }
 
     public function test_docker_never_writes_app_url_here(): void
