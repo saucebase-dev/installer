@@ -502,7 +502,8 @@ class InstallCommand extends Command
     protected function applyIdentityToEnv(string $env, string $name, string $slug, string $host, bool $native = false): string
     {
         $replaceable = [
-            'APP_NAME' => [['Laravel', 'Saucebase'], str_contains($name, ' ') ? "\"{$name}\"" : $name],
+            // Quoted when dotenv would misread it bare; inside the quotes, \ and " are escaped.
+            'APP_NAME' => [['Laravel', 'Saucebase'], preg_match('/[\s"\\\\$#]/', $name) ? '"'.addcslashes($name, '"\\').'"' : $name],
             'APP_SLUG' => [['saucebase'], $slug],
         ];
 
@@ -542,8 +543,9 @@ class InstallCommand extends Command
     {
         $pattern = '/^'.preg_quote($key, '/').'=.*$/m';
 
+        // A callback, so the value is written as given: preg_replace would read $0 or \1 in it as backreferences.
         return preg_match($pattern, $env)
-            ? preg_replace($pattern, "{$key}={$value}", $env)
+            ? preg_replace_callback($pattern, fn () => "{$key}={$value}", $env)
             : rtrim($env, "\n")."\n{$key}={$value}\n";
     }
 
