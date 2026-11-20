@@ -128,10 +128,18 @@ class StackCommand extends Command
 
         // A template's own files (CSS, page shell, tsconfig) are core's to put back, not this command's.
         if (is_string($this->projectJson()['template'] ?? null)) {
-            $this->line('Template workspace: run `php artisan saucebase:template-capture --restore` to put its files back for this stack.');
+            $this->line('Template workspace: run `'.$this->inWorkspace('php artisan saucebase:template-capture --restore').'` to put its files back for this stack.');
         }
 
         return self::SUCCESS;
+    }
+
+    /** A command for the workspace to run: from elsewhere (--path), it goes there first. */
+    private function inWorkspace(string $command): string
+    {
+        return realpath($this->basePath) === realpath((string) getcwd())
+            ? $command
+            : 'cd '.escapeshellarg($this->basePath)." && {$command}";
     }
 
     private function runReset(): int
@@ -147,8 +155,8 @@ class StackCommand extends Command
         if ($this->cssEdited() && ! $this->option('force')) {
             // A template's CSS belongs in its stubs, never in core: --sync would push it there.
             $this->error(is_string($this->projectJson()['template'] ?? null)
-                ? 'resources/css differs from saucebase/core. Keep template changes with `php artisan saucebase:template-capture`, '
-                    .'then run `saucebase stack --reset --force`.'
+                ? 'resources/css differs from saucebase/core. Keep template changes with `'.$this->inWorkspace('php artisan saucebase:template-capture').'`, '
+                    .'then run `'.$this->inWorkspace('saucebase stack --reset --force').'`.'
                 : 'resources/css has changes that are not in saucebase/core. Run `saucebase stack --sync` '
                     .'to keep them, or `saucebase stack --reset --force` to discard them.');
 

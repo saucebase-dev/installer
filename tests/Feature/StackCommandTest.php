@@ -585,6 +585,24 @@ class StackCommandTest extends TestCase
             ->doesntExpectOutputToContain('--sync');
     }
 
+    /** Run from elsewhere with --path: the commands it names run in that workspace, not here. */
+    public function test_a_template_workspace_named_by_path_is_told_to_go_there_first(): void
+    {
+        $this->seedFakeStubs('vue');
+        $this->seedFakeTemplate();
+
+        $this->artisan('stack vue --dev --path='.$this->tmpDir)
+            ->assertSuccessful()
+            ->expectsOutputToContain("cd '{$this->tmpDir}' && php artisan saucebase:template-capture --restore");
+
+        file_put_contents($this->tmpDir.'/resources/css/app.css', '/* the template\'s */');
+
+        $this->artisan('stack --reset --path='.$this->tmpDir)
+            ->assertFailed()
+            ->expectsOutputToContain("cd '{$this->tmpDir}' && php artisan saucebase:template-capture")
+            ->expectsOutputToContain("cd '{$this->tmpDir}' && saucebase stack --reset --force");
+    }
+
     public function test_a_plain_checkout_is_not_told_to_restore_stubs(): void
     {
         $this->seedFakeStubs('react');
