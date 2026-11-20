@@ -3,6 +3,7 @@
 namespace Saucebase\Installer\Tests\Feature\Environments;
 
 use Saucebase\Installer\Console\Commands\InstallCommand;
+use Saucebase\Installer\Environments\DockerEnvironment;
 use Saucebase\Installer\Environments\NativeEnvironment;
 use Saucebase\Installer\Tests\TestCase;
 
@@ -165,6 +166,29 @@ class EnvironmentHelpersTest extends TestCase
             ['Sign up, then make your account the admin: `php artisan auth:make-admin you@example.com`'],
             $this->environment()->exposedDemoStep($this->command()),
         );
+    }
+
+    /** On Docker, `.env` names hosts only the containers resolve: the commands it prints run in the app container. */
+    public function test_docker_prints_its_artisan_commands_for_the_container(): void
+    {
+        $docker = new class extends DockerEnvironment
+        {
+            protected function artisanOutput(InstallCommand $command, array $args): ?string
+            {
+                return (string) json_encode([['email' => 'chef@saucebase.dev', 'description' => 'admin', 'featured' => true]]);
+            }
+
+            public function exposedDemoStep(InstallCommand $command): array
+            {
+                return $this->demoStep($command);
+            }
+        };
+        mkdir($this->tmp.'/modules/auth', recursive: true);
+
+        $this->assertStringContainsString('`docker compose exec app php artisan auth:make-admin you@example.com`', $docker->exposedDemoStep($this->command())[0]);
+
+        file_put_contents($this->tmp.'/.env', "DEMO_PASSWORD=s3cret\n");
+        $this->assertStringContainsString('`docker compose exec app php artisan modules:demo-accounts --state=showcase`', $docker->exposedDemoStep($this->command(demo: true))[0]);
     }
 
     private function command(?string $modules = null, ?string $target = null, bool $demo = false, ?string $template = null): InstallCommand
