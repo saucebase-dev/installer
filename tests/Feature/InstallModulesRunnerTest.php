@@ -2,6 +2,7 @@
 
 namespace Saucebase\Installer\Tests\Feature;
 
+use Illuminate\Support\Facades\Process;
 use Saucebase\Installer\Console\Commands\InstallCommand;
 use Saucebase\Installer\Tests\TestCase;
 
@@ -102,6 +103,105 @@ class InstallModulesRunnerTest extends TestCase
         $this->assertSame(['php artisan saucebase:template-install saucebase/uptime --no-interaction'], $ran);
         // No accounts are seeded, so there is no password to set.
         $this->assertStringNotContainsString('DEMO_PASSWORD=', (string) @file_get_contents($this->tmp.'/.env'));
+    }
+
+    /** Installing Saucebase and the migrations fail the same way as a module: with the reason. */
+    public function test_a_failed_core_install_or_migration_shows_its_error(): void
+    {
+        Process::fake(['*' => Process::result(errorOutput: "SQLSTATE[HY000] [2002] Connection refused\n", exitCode: 1)]);
+        $command = new class extends TestableInstallCommand
+        {
+            /** @var string[] */
+            public array $warnings = [];
+
+            public function attempt(string $step): bool
+            {
+                $warnings = &$this->warnings;
+                $this->components = new class($warnings)
+                {
+                    /** @param  string[]  $warnings */
+                    public function __construct(private array &$warnings) {}
+
+                    public function task(string $label, callable $task): void
+                    {
+                        $task();
+                    }
+
+                    public function warn(string $message): void
+                    {
+                        $this->warnings[] = $message;
+                    }
+                };
+
+                return $step === 'core' ? $this->installSaucebase() : $this->setupDatabase();
+            }
+
+            public function newLine($count = 1): static
+            {
+                return $this;
+            }
+        };
+        $command->fakeOptions = ['path' => $this->tmp];
+        $command->setSelectedStack('vue');
+
+        foreach (['core' => 'Installing Saucebase', 'database' => 'Running migrations'] as $step => $label) {
+            $command->warnings = [];
+
+            $this->assertFalse($command->attempt($step));
+            $this->assertStringContainsString('Connection refused', implode("\n", $command->warnings));
+            $this->assertSame("Failed at: {$label}", $command->exposedFailureCalloutContent(null)[0]);
+        }
+    }
+
+    /** A failed step shows why, not only how to run it again. */
+    public function test_a_failed_step_shows_its_error(): void
+    {
+        Process::fake([
+            '*' => Process::result(output: "Installing...\n", errorOutput: "Loading composer repositories with package information\nPackage operations: 16 installs, 0 updates, 0 removals\n 0 [>---]\n  - Installing saucebase/notes (dev-dev): Extracting archive\n 0/16 [>---] 0%\n  saucebase/notes does not support react.\nrequire [--dev] [--dry-run] [<packages>...]\n", exitCode: 1),
+        ]);
+        $command = new class extends TestableInstallCommand
+        {
+            /** @var string[] */
+            public array $warnings = [];
+
+            public function installDefault(): bool
+            {
+                $warnings = &$this->warnings;
+                $this->components = new class($warnings)
+                {
+                    /** @param  string[]  $warnings */
+                    public function __construct(private array &$warnings) {}
+
+                    public function task(string $label, callable $task): void
+                    {
+                        $task();
+                    }
+
+                    public function warn(string $message): void
+                    {
+                        $this->warnings[] = $message;
+                    }
+                };
+
+                return InstallCommand::doInstallModules([]);
+            }
+
+            public function newLine($count = 1): static
+            {
+                return $this;
+            }
+        };
+        $command->fakeOptions = ['path' => $this->tmp, 'template' => 'saucebase/notes'];
+
+        $this->assertFalse($command->installDefault());
+        $this->assertStringContainsString('saucebase/notes does not support react.', implode("\n", $command->warnings));
+        // One way on, the install's resume command: re-running only this step would skip
+        // the build and the rest.
+        $this->assertStringNotContainsString('saucebase:template-install', implode("\n", $command->warnings));
+        $this->assertStringNotContainsString('Extracting archive', implode("\n", $command->warnings));
+        $this->assertStringNotContainsString('--dry-run', implode("\n", $command->warnings));
+        $this->assertStringNotContainsString('Package operations', implode("\n", $command->warnings));
+        $this->assertSame('Failed at: Installing the template', $command->exposedFailureCalloutContent(null)[0]);
     }
 
     /** A template requires its own modules: nothing to look up or ask. */

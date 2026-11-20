@@ -4,6 +4,7 @@ namespace Saucebase\Installer\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Console\View\TaskResult;
+use Illuminate\Contracts\Process\ProcessResult;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use Laravel\Prompts\Elements\Element;
@@ -111,10 +112,22 @@ class InstallCommand extends Command
      */
     public function runArtisan(array $args, int $timeout = 120): bool
     {
-        return Process::path($this->targetPath())
+        return $this->remember(Process::path($this->targetPath())
             ->timeout($timeout)
-            ->run([PHP_BINARY, $this->path('artisan'), ...$args])
-            ->successful();
+            ->run([PHP_BINARY, $this->path('artisan'), ...$args]));
+    }
+
+    /** The last lines a failed step wrote, so its warning can say why. */
+    protected ?string $lastFailure = null;
+
+    /** The install task that failed, named in the failure box when the driver didn't name a step. */
+    protected ?string $failedTask = null;
+
+    private function remember(ProcessResult $result): bool
+    {
+        $this->lastFailure = $result->successful() ? null : trim($result->output()."\n".$result->errorOutput());
+
+        return $result->successful();
     }
 
     public function getSelectedStack(): ?string
@@ -286,10 +299,9 @@ class InstallCommand extends Command
     /** @param  string[]  $command */
     public function runProcess(array $command, int $timeout = 300): bool
     {
-        return Process::path($this->targetPath())
+        return $this->remember(Process::path($this->targetPath())
             ->timeout($timeout)
-            ->run($command)
-            ->successful();
+            ->run($command));
     }
 
     /** A contributor checkout runs the UI from saucebase/core instead of owning a copy. */
@@ -331,12 +343,7 @@ class InstallCommand extends Command
 
         $this->generateApplicationKey();
 
-        $installed = false;
-        $this->task('Installing Saucebase', function () use (&$installed) {
-            return $installed = $this->installCore();
-        });
-
-        if (! $installed) {
+        if (! $this->installSaucebase()) {
             return self::FAILURE;
         }
 
@@ -490,7 +497,8 @@ class InstallCommand extends Command
     protected function applyIdentityToEnv(string $env, string $name, string $slug, string $host, bool $native = false): string
     {
         $replaceable = [
-            'APP_NAME' => [['Laravel', 'Saucebase'], str_contains($name, ' ') ? "\"{$name}\"" : $name],
+            // Quoted when dotenv would misread it bare; inside the quotes, \ and " are escaped.
+            'APP_NAME' => [['Laravel', 'Saucebase'], preg_match('/[\s"\\\\$#]/', $name) ? '"'.addcslashes($name, '"\\').'"' : $name],
             'APP_SLUG' => [['saucebase'], $slug],
         ];
 
@@ -502,16 +510,23 @@ class InstallCommand extends Command
             }
         }
 
+        // Read before APP_HOST is overwritten: a URL on the host chosen last time is ours.
+        $previousHost = self::readEnvLine($env, 'APP_HOST');
+
         // Always authoritative: the certificate and nginx config are generated from the
         // resolved domain, so APP_HOST must agree with them. A user's own value is not
         // lost — it is what captureDomain() offers as the prompt default.
         $env = self::setEnvLine($env, 'APP_HOST', $host);
 
-        // Native serves on whatever laravel/installer already wrote for localhost
-        // (http://localhost:8000, which is what `composer dev` binds); only a custom
-        // host needs correcting here.
-        if ($native && $host !== 'localhost') {
-            $env = self::setEnvLine($env, 'APP_URL', 'http://'.$host);
+        // Only a URL the installer wrote follows the host, keeping its scheme and port: native's
+        // localhost one is laravel/installer's http://localhost:8000, what `composer dev` binds.
+        // Docker's localhost URL is applyDockerEnvDefaults()'s, which also sets scheme and port.
+        $url = self::readEnvLine($env, 'APP_URL');
+        $urlHost = $url === null ? null : parse_url($url, PHP_URL_HOST);
+        $ours = array_filter([$native ? 'localhost' : null, $previousHost]);
+
+        if (is_string($urlHost) && $urlHost !== $host && in_array($urlHost, $ours, true)) {
+            $env = self::setEnvLine($env, 'APP_URL', (string) preg_replace('#^(https?://)[^/:]+#', '${1}'.$host, $url));
         }
 
         return $env;
@@ -530,8 +545,9 @@ class InstallCommand extends Command
     {
         $pattern = '/^'.preg_quote($key, '/').'=.*$/m';
 
+        // A callback, so the value is written as given: preg_replace would read $0 or \1 in it as backreferences.
         return preg_match($pattern, $env)
-            ? preg_replace($pattern, "{$key}={$value}", $env)
+            ? preg_replace_callback($pattern, fn () => "{$key}={$value}", $env)
             : rtrim($env, "\n")."\n{$key}={$value}\n";
     }
 
@@ -567,18 +583,19 @@ class InstallCommand extends Command
         });
     }
 
+    /** Composer and core's own install; a failure says why, like every install step. */
+    protected function installSaucebase(): bool
+    {
+        return $this->runInstallTask('Installing Saucebase', [], fn () => $this->installCore());
+    }
+
     protected function setupDatabase(): bool
     {
         $fresh = $this->option('fresh');
         $label = $fresh ? 'Running migrate:fresh --seed' : 'Running migrations';
         $command = $fresh ? 'migrate:fresh' : 'migrate';
-        $ok = false;
 
-        $this->task($label, function () use ($command, &$ok) {
-            return $ok = $this->runArtisan([$command, '--seed', '--force'], 300);
-        });
-
-        return $ok;
+        return $this->runInstallTask($label, [$command, '--seed', '--force'], fn (array $args) => $this->runArtisan($args, 300));
     }
 
     /** False when a selected module could not be wired into the application. */
@@ -595,12 +612,16 @@ class InstallCommand extends Command
             return true;
         }
 
-        // Fast path: skip Packagist discovery when all requested names are fully qualified
+        // Named modules need no discovery: a short name is one of Saucebase's, as in
+        // core's template-install. Private modules aren't on Packagist; Composer says
+        // so if a name doesn't exist.
         if ($opt) {
-            $names = array_values(array_filter(array_map(fn ($n) => strtolower(trim($n)), explode(',', $opt))));
-            if ($names && ! array_filter($names, fn ($n) => ! str_contains($n, '/'))) {
-                return $this->doInstallModules($names);
-            }
+            return $this->doInstallModules(collect(explode(',', $opt))
+                ->map(fn (string $name) => strtolower(trim($name)))
+                ->filter()
+                ->map(fn (string $name) => str_contains($name, '/') ? $name : 'saucebase/'.$name)
+                ->values()
+                ->all());
         }
 
         if (! $opt && empty($this->selectedModules) && ! $this->option('all-modules')) {
@@ -717,7 +738,16 @@ class InstallCommand extends Command
         });
 
         if (! $ok) {
-            $this->components->warn("{$label} failed. Run it again to see why: ".implode(' ', array_diff($command, ['--no-interaction'])));
+            // ANSI codes and blank lines out; the end of the output is where the reason is.
+            $why = collect(explode("\n", (string) preg_replace('/\e\[[0-9;]*m/', '', (string) $this->lastFailure)))
+                ->map(fn (string $line) => trim($line))->filter()
+                // Composer's progress, per-package and usage lines bury the reason.
+                ->reject(fn (string $line) => (bool) preg_match('/^(\d+(\/\d+)? \[|- (Installing|Downloading|Locking|Excluded)|require \[|Loading composer|Updating dependencies|Lock file operations|Writing lock file|Installing dependencies|Package operations|Generating .*autoload)/', $line))
+                ->take(-12)->implode("\n");
+            // The reason only: the failure box's resume command reruns this step and every
+            // one after it (the build, HTTPS); re-running this one alone would skip them.
+            $this->failedTask = $label;
+            $this->components->warn("{$label} failed".($why !== '' ? ":\n{$why}" : '.'));
         }
 
         return $ok;
@@ -740,22 +770,6 @@ class InstallCommand extends Command
         // 1. Select all modules
         if ($this->option('all-modules')) {
             return $available;
-        }
-
-        // 2. Modules passed via --modules option
-        if ($modules = $this->option('modules')) {
-            $requested = collect(explode(',', $modules))
-                ->map(fn ($m) => strtolower(trim($m)))
-                ->filter()
-                ->values();
-
-            return collect($available)
-                ->filter(function (string $package) use ($requested) {
-                    return $requested->contains(strtolower($package))
-                        || $requested->contains(strtolower(Str::after($package, '/')));
-                })
-                ->values()
-                ->all();
         }
 
         return $this->selectedModules;
@@ -829,6 +843,8 @@ class InstallCommand extends Command
     /** @return array<int, string> */
     protected function failureCalloutContent(?string $step): array
     {
+        $step ??= $this->failedTask;
+
         return array_values(array_filter([
             $step ? "Failed at: {$step}" : null,
             'Your application directory is intact — nothing was rolled back.',
@@ -854,8 +870,18 @@ class InstallCommand extends Command
             $command .= ' '.$this->selectedStack;
         }
 
+        // Herd's choice is only on the command line; Docker's comes back resolved.
+        if (! isset($resumeOptions['--ssl']) && ($ssl = $this->optionOrNull('ssl'))) {
+            $resumeOptions['--ssl'] = $ssl;
+        }
+
         foreach ($resumeOptions as $option => $value) {
             $command .= " {$option}={$value}";
+        }
+
+        // Free text: quoted, so a name with spaces or quotes survives the shell.
+        if ($name = $this->optionOrNull('app-name')) {
+            $command .= ' --app-name='.escapeshellarg($name);
         }
 
         if ($this->domain !== null) {

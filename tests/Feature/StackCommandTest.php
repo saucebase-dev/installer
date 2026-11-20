@@ -540,8 +540,86 @@ class StackCommandTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Template workspace ("template" in saucebase.json)
+    // -------------------------------------------------------------------------
+
+    /** The workspace builds a template: switching stacks must not forget which. */
+    public function test_reset_keeps_the_template_the_workspace_builds(): void
+    {
+        $this->seedFakeStubs('vue');
+        $this->seedFakeTemplate();
+        $this->artisan('stack vue --dev')->assertSuccessful();
+
+        $this->artisan('stack --reset')->assertSuccessful();
+
+        $data = json_decode(file_get_contents($this->tmpDir.'/saucebase.json'), true);
+        $this->assertNull($data['framework']);
+        $this->assertSame('uptime', $data['template']);
+    }
+
+    /**
+     * The template's own files (CSS, page shell, tsconfig) are core's business: the stack
+     * command only points at the core command that puts them back for the stack chosen.
+     */
+    public function test_a_template_workspace_is_told_to_restore_its_stubs(): void
+    {
+        $this->seedFakeStubs('react');
+        $this->seedFakeTemplate();
+
+        $this->artisan('stack react --dev')
+            ->assertSuccessful()
+            ->expectsOutputToContain('php artisan saucebase:template-capture --restore');
+    }
+
+    /** A template's CSS belongs in its stubs, never in core: --sync is the wrong way out. */
+    public function test_a_template_workspace_with_css_changes_is_sent_to_capture_not_sync(): void
+    {
+        $this->seedFakeStubs('vue');
+        $this->seedFakeTemplate();
+        $this->artisan('stack vue --dev')->assertSuccessful();
+        file_put_contents($this->tmpDir.'/resources/css/app.css', '/* the template\'s */');
+
+        $this->artisan('stack --reset')
+            ->assertFailed()
+            ->expectsOutputToContain('php artisan saucebase:template-capture')
+            ->doesntExpectOutputToContain('--sync');
+    }
+
+    /** Run from elsewhere with --path: the commands it names run in that workspace, not here. */
+    public function test_a_template_workspace_named_by_path_is_told_to_go_there_first(): void
+    {
+        $this->seedFakeStubs('vue');
+        $this->seedFakeTemplate();
+
+        $this->artisan('stack vue --dev --path='.$this->tmpDir)
+            ->assertSuccessful()
+            ->expectsOutputToContain("cd '{$this->tmpDir}' && php artisan saucebase:template-capture --restore");
+
+        file_put_contents($this->tmpDir.'/resources/css/app.css', '/* the template\'s */');
+
+        $this->artisan('stack --reset --path='.$this->tmpDir)
+            ->assertFailed()
+            ->expectsOutputToContain("cd '{$this->tmpDir}' && php artisan saucebase:template-capture")
+            ->expectsOutputToContain("cd '{$this->tmpDir}' && saucebase stack --reset --force");
+    }
+
+    public function test_a_plain_checkout_is_not_told_to_restore_stubs(): void
+    {
+        $this->seedFakeStubs('react');
+
+        $this->artisan('stack react --dev')
+            ->assertSuccessful()
+            ->doesntExpectOutputToContain('template-capture');
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    private function seedFakeTemplate(): void
+    {
+        file_put_contents($this->tmpDir.'/saucebase.json', json_encode(['framework' => null, 'template' => 'uptime']).PHP_EOL);
+    }
 
     private function seedFakeViewStub(string $framework, string $entry): void
     {
@@ -556,7 +634,7 @@ class StackCommandTest extends TestCase
         $this->files->ensureDirectoryExists($stubDir);
 
         file_put_contents($stubDir.'/vite.config.js', "import { saucebase } from './vendor/saucebase/core/resources/js/{$framework}/vite.ts';");
-        file_put_contents($stubDir.'/tsconfig.json', "{\"paths\": {\"@/*\": [\"./vendor/saucebase/core/stubs/stack/{$framework}/js/*\"]}}");
+        file_put_contents($stubDir.'/tsconfig.json', "{\"compilerOptions\": {\"paths\": {\"@/*\": [\"./vendor/saucebase/core/stubs/stack/{$framework}/js/*\"]}}, \"include\": [\"resources/js/*.ts\"]}");
         file_put_contents($stubDir.'/package.json', '{}');
         file_put_contents($stubDir.'/package-lock.json', '{}');
         file_put_contents($stubDir.'/eslint.config.js', '// eslint');

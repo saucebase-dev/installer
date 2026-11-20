@@ -5,6 +5,7 @@ namespace Saucebase\Installer\Tests\Feature;
 use Laravel\Prompts\Key;
 use Laravel\Prompts\Prompt;
 use Saucebase\Installer\Console\Commands\NewCommand;
+use Saucebase\Installer\Environments\DockerEnvironment;
 use Saucebase\Installer\Environments\Environment;
 use Saucebase\Installer\Environments\HerdEnvironment;
 use Saucebase\Installer\Environments\NativeEnvironment;
@@ -59,6 +60,83 @@ class NewCommandTest extends TestCase
         $this->assertTrue($this->command([])->exposedSsl(new HerdEnvironment));
         $this->assertFalse($this->command(['ssl' => 'no'])->exposedSsl(new HerdEnvironment));
         $this->assertNull($this->command([])->exposedSsl(new NativeEnvironment));
+    }
+
+    /** Herd secures with `herd secure`: a machine without mkcert still gets its HTTPS app. */
+    public function test_herd_does_not_need_mkcert(): void
+    {
+        $herd = new class extends HerdEnvironment
+        {
+            public function missingPrerequisites(): array
+            {
+                return [];
+            }
+
+            public function hasCommand(string $name): bool
+            {
+                return $name !== 'mkcert';
+            }
+        };
+        $this->bindCommand(new class($herd) extends NewCommand
+        {
+            public function __construct(private Environment $herd)
+            {
+                parent::__construct();
+            }
+
+            protected function resolveDriver(string $name): Environment
+            {
+                return $this->herd;
+            }
+
+            // The step after the SSL check: reaching it is the point.
+            protected function resolveDomain(string $name, Environment $driver): string
+            {
+                throw new \RuntimeException('past the SSL check');
+            }
+        });
+
+        $this->expectExceptionMessage('past the SSL check');
+
+        $this->artisan('new acme --driver=herd --stack=vue --modules=none -n');
+    }
+
+    /** Docker's certificates come from mkcert: without it, stop before the project is created, not after. */
+    public function test_docker_with_ssl_needs_mkcert_before_the_project_is_created(): void
+    {
+        $docker = new class extends DockerEnvironment
+        {
+            public function missingPrerequisites(): array
+            {
+                return [];
+            }
+
+            public function hasCommand(string $name): bool
+            {
+                return $name !== 'mkcert';
+            }
+        };
+        $this->bindCommand(new class($docker) extends NewCommand
+        {
+            public function __construct(private Environment $docker)
+            {
+                parent::__construct();
+            }
+
+            protected function resolveDriver(string $name): Environment
+            {
+                return $this->docker;
+            }
+
+            protected function resolveDomain(string $name, Environment $driver): string
+            {
+                throw new \RuntimeException('past the SSL check');
+            }
+        });
+
+        $this->artisan('new acme --driver=docker --ssl=yes --stack=vue --modules=none -n')
+            ->expectsOutputToContain('mkcert is required for SSL')
+            ->assertFailed();
     }
 
     public function test_the_folder_defaults_to_the_app_name_as_a_slug(): void

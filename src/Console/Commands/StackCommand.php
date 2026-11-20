@@ -126,7 +126,20 @@ class StackCommand extends Command
 
         $this->info("Framework set to {$framework} (dev mode)");
 
+        // A template's own files (CSS, page shell, tsconfig) are core's to put back, not this command's.
+        if (is_string($this->projectJson()['template'] ?? null)) {
+            $this->line('Template workspace: run `'.$this->inWorkspace('php artisan saucebase:template-capture --restore').'` to put its files back for this stack.');
+        }
+
         return self::SUCCESS;
+    }
+
+    /** A command for the workspace to run: from elsewhere (--path), it goes there first. */
+    private function inWorkspace(string $command): string
+    {
+        return realpath($this->basePath) === realpath((string) getcwd())
+            ? $command
+            : 'cd '.escapeshellarg($this->basePath)." && {$command}";
     }
 
     private function runReset(): int
@@ -140,13 +153,20 @@ class StackCommand extends Command
         }
 
         if ($this->cssEdited() && ! $this->option('force')) {
-            $this->error('resources/css has changes that are not in saucebase/core. Run `saucebase stack --sync` '
-                .'to keep them, or `saucebase stack --reset --force` to discard them.');
+            // A template's CSS belongs in its stubs, never in core: --sync would push it there.
+            $this->error(is_string($this->projectJson()['template'] ?? null)
+                ? 'resources/css differs from saucebase/core. Keep template changes with `'.$this->inWorkspace('php artisan saucebase:template-capture').'`, '
+                    .'then run `'.$this->inWorkspace('saucebase stack --reset --force').'`.'
+                : 'resources/css has changes that are not in saucebase/core. Run `saucebase stack --sync` '
+                    .'to keep them, or `saucebase stack --reset --force` to discard them.');
 
             return self::FAILURE;
         }
 
         $this->info("Resetting framework '{$framework}'...");
+
+        // What the workspace set itself (the template it builds, say) outlives the stack.
+        $kept = array_diff_key($this->projectJson(), array_flip(['framework', 'contributor']));
 
         $this->restoreTrackedFiles($framework);
 
@@ -166,6 +186,13 @@ class StackCommand extends Command
         $lockfile = $this->basePath.'/'.self::LOCKFILE;
         if ($this->files->exists($lockfile)) {
             $this->files->delete($lockfile);
+        }
+
+        if ($kept !== []) {
+            $this->files->put(
+                $this->basePath.'/saucebase.json',
+                json_encode([...$this->projectJson(), ...$kept], JSON_PRETTY_PRINT).PHP_EOL,
+            );
         }
 
         $this->info('Reset complete. Run: npm install to restore base dependencies.');

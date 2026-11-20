@@ -825,10 +825,22 @@ class DockerEnvironment extends Environment
         $this->execInContainer($command, ['php', 'artisan', 'storage:link']);
     }
 
+    protected function printedArtisan(): string
+    {
+        return 'docker compose exec app php artisan';
+    }
+
     /** Inside the app container: on the host, `.env` points at hostnames only Docker resolves. */
     protected function artisan(InstallCommand $command, array $args): bool
     {
         return $this->execInContainer($command, ['php', 'artisan', ...$args], quiet: true);
+    }
+
+    protected function artisanOutput(InstallCommand $command, array $args): ?string
+    {
+        $result = Process::path($command->targetPath())->timeout(120)->run(['docker', 'compose', 'exec', '-T', 'app', 'php', 'artisan', ...$args]);
+
+        return $result->successful() ? $result->output() : null;
     }
 
     protected function clearCaches(InstallCommand $command): void
