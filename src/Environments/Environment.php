@@ -150,7 +150,7 @@ abstract class Environment
         // No demo accounts: with auth, the owner's own account has to become the admin.
         if ($password === null) {
             return is_dir($command->path('modules/auth'))
-                ? ['Sign up, then make your account the admin: `php artisan auth:make-admin you@example.com`']
+                ? ['Sign up, then make your account the admin: `'.$this->printedArtisan().' auth:make-admin you@example.com`']
                 : [];
         }
 
@@ -170,7 +170,13 @@ abstract class Environment
 
         $accounts = implode(' or ', array_map(fn (array $account): string => "`{$account['email']}` ({$account['description']})", $featured));
 
-        return ["Sign in as {$accounts} with the password `{$password}`, saved in .env as DEMO_PASSWORD. Every demo account: `php artisan modules:demo-accounts --state={$state}`"];
+        return ["Sign in as {$accounts} with the password `{$password}`, saved in .env as DEMO_PASSWORD. Every demo account: `{$this->printedArtisan()} modules:demo-accounts --state={$state}`"];
+    }
+
+    /** How the user runs artisan in the new app, for the commands printed at the end. */
+    protected function printedArtisan(): string
+    {
+        return 'php artisan';
     }
 
     /** Hook: perform driver-specific steps before the module prompt. Return an exit code to abort, null to continue. */

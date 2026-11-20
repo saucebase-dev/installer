@@ -825,6 +825,11 @@ class DockerEnvironment extends Environment
         $this->execInContainer($command, ['php', 'artisan', 'storage:link']);
     }
 
+    protected function printedArtisan(): string
+    {
+        return 'docker compose exec app php artisan';
+    }
+
     /** Inside the app container: on the host, `.env` points at hostnames only Docker resolves. */
     protected function artisan(InstallCommand $command, array $args): bool
     {

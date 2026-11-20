@@ -64,8 +64,16 @@ class NewCommand extends Command
             return self::FAILURE;
         }
 
-        // mkcert is Docker's business, checked by DockerEnvironment; Herd secures with `herd secure`.
         $ssl = $this->ssl($driver);
+
+        // Docker's certificates come from mkcert: checked here, before the project exists, so a
+        // missing one leaves nothing half-made. Herd secures with `herd secure` instead.
+        if ($ssl === true && $driver->name() === 'docker' && ! $driver->hasCommand('mkcert')) {
+            $this->error('mkcert is required for SSL. Install it with: brew install mkcert');
+            $this->info('Official mkcert installation instructions: https://github.com/FiloSottile/mkcert');
+
+            return self::FAILURE;
+        }
 
         $domain = $this->resolveDomain($name, $driver);
 
