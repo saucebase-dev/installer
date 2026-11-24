@@ -119,6 +119,7 @@ class StackCommand extends Command
 
         $this->writeProjectJson($framework);
         $this->skipGeneratedFiles($framework);
+        $this->writeCoreTsconfig($framework);
 
         if (! $this->option('no-install')) {
             $this->runNpmInstall();
@@ -187,6 +188,8 @@ class StackCommand extends Command
         if ($this->files->exists($lockfile)) {
             $this->files->delete($lockfile);
         }
+
+        $this->files->delete($this->coreTsconfigPath($framework));
 
         if ($kept !== []) {
             $this->files->put(
@@ -299,6 +302,52 @@ class StackCommand extends Command
 
             $this->files->copy($source, $destination);
         }
+    }
+
+    /**
+     * A symlinked core's components live outside the app, where no tsconfig reaches them:
+     * Storybook's docgen and editors find a file's tsconfig by walking up from its real
+     * path. This one, beside the stack's code, extends the app's and points the aliases
+     * and packages back at the app. Core git-ignores it: the paths are this machine's.
+     */
+    private function writeCoreTsconfig(string $framework): void
+    {
+        if (! is_link($this->basePath.'/vendor/saucebase/core')) {
+            return;
+        }
+
+        $app = (string) realpath($this->basePath);
+        $appConfig = json_decode($this->files->get($app.'/tsconfig.json'), true);
+
+        // `paths` replaces the extended config's paths rather than merging, so all of them,
+        // made absolute, plus every package from the app's node_modules.
+        $paths = array_map(
+            fn (array $targets) => array_map(fn (string $target) => $app.'/'.preg_replace('#^\./#', '', $target), $targets),
+            $appConfig['compilerOptions']['paths'] ?? [],
+        );
+        $paths['*'] = [$app.'/node_modules/*', $app.'/node_modules/@types/*'];
+
+        $config = [
+            'extends' => $app.'/tsconfig.json',
+            'compilerOptions' => [
+                'paths' => $paths,
+                // The files are read at their real path; following the vendor/ link back
+                // would load each one twice.
+                'preserveSymlinks' => false,
+            ],
+            'include' => ['**/*.ts', $framework === 'react' ? '**/*.tsx' : '**/*.vue'],
+        ];
+
+        $this->files->ensureDirectoryExists(dirname($this->coreTsconfigPath($framework)));
+        $this->files->put(
+            $this->coreTsconfigPath($framework),
+            json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES).PHP_EOL,
+        );
+    }
+
+    private function coreTsconfigPath(string $framework): string
+    {
+        return $this->stubDir($framework).'/js/tsconfig.json';
     }
 
     private function copyLockFile(string $framework): void
