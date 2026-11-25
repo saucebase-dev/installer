@@ -315,8 +315,26 @@ class StackCommandTest extends TestCase
         $config = json_decode(file_get_contents($core.'/stubs/stack/vue/js/tsconfig.json'), true);
         $this->assertSame($app.'/tsconfig.json', $config['extends']);
         $this->assertSame([$app.'/vendor/saucebase/core/stubs/stack/vue/js/*'], $config['compilerOptions']['paths']['@/*']);
-        $this->assertSame([$app.'/node_modules/*', $app.'/node_modules/@types/*'], $config['compilerOptions']['paths']['*']);
         $this->assertSame(['**/*.ts', '**/*.vue'], $config['include']);
+    }
+
+    /**
+     * Packages resolve from core's real path through a link to the app's node_modules, as
+     * from inside the app: a `*` path mapping would skip packages' `exports`
+     * (`storybook/test`) and never reach type references (`vite/client`).
+     */
+    public function test_dev_mode_links_a_symlinked_core_to_the_app_packages(): void
+    {
+        $core = $this->linkCore();
+        $this->seedFakeStubs('vue');
+
+        $this->artisan('stack vue --dev')->assertSuccessful();
+
+        $link = $core.'/stubs/stack/vue/js/node_modules';
+        $this->assertTrue(is_link($link));
+        $this->assertSame(realpath($this->tmpDir).'/node_modules', readlink($link));
+        $config = json_decode(file_get_contents($core.'/stubs/stack/vue/js/tsconfig.json'), true);
+        $this->assertArrayNotHasKey('*', $config['compilerOptions']['paths']);
     }
 
     public function test_dev_mode_react_includes_tsx_in_the_core_tsconfig(): void
@@ -349,6 +367,7 @@ class StackCommandTest extends TestCase
         $this->artisan('stack --reset')->assertSuccessful();
 
         $this->assertFileDoesNotExist($core.'/stubs/stack/vue/js/tsconfig.json');
+        $this->assertFalse(is_link($core.'/stubs/stack/vue/js/node_modules'));
     }
 
     private function bindNpmSpy(): StackCommand

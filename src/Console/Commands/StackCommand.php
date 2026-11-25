@@ -190,6 +190,9 @@ class StackCommand extends Command
         }
 
         $this->files->delete($this->coreTsconfigPath($framework));
+        if (is_link($this->corePackagesLink($framework))) {
+            unlink($this->corePackagesLink($framework));
+        }
 
         if ($kept !== []) {
             $this->files->put(
@@ -308,7 +311,9 @@ class StackCommand extends Command
      * A symlinked core's components live outside the app, where no tsconfig reaches them:
      * Storybook's docgen and editors find a file's tsconfig by walking up from its real
      * path. This one, beside the stack's code, extends the app's and points the aliases
-     * and packages back at the app. Core git-ignores it: the paths are this machine's.
+     * back at the app; a node_modules link beside it resolves packages as from inside the
+     * app, with their `exports` and type references (`vite/client`). Core git-ignores
+     * both: the paths are this machine's.
      */
     private function writeCoreTsconfig(string $framework): void
     {
@@ -320,12 +325,11 @@ class StackCommand extends Command
         $appConfig = json_decode($this->files->get($app.'/tsconfig.json'), true);
 
         // `paths` replaces the extended config's paths rather than merging, so all of them,
-        // made absolute, plus every package from the app's node_modules.
+        // made absolute.
         $paths = array_map(
             fn (array $targets) => array_map(fn (string $target) => $app.'/'.preg_replace('#^\./#', '', $target), $targets),
             $appConfig['compilerOptions']['paths'] ?? [],
         );
-        $paths['*'] = [$app.'/node_modules/*', $app.'/node_modules/@types/*'];
 
         $config = [
             'extends' => $app.'/tsconfig.json',
@@ -343,11 +347,21 @@ class StackCommand extends Command
             $this->coreTsconfigPath($framework),
             json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES).PHP_EOL,
         );
+
+        $link = $this->corePackagesLink($framework);
+        if (! file_exists($link) && ! is_link($link)) {
+            symlink($app.'/node_modules', $link);
+        }
     }
 
     private function coreTsconfigPath(string $framework): string
     {
         return $this->stubDir($framework).'/js/tsconfig.json';
+    }
+
+    private function corePackagesLink(string $framework): string
+    {
+        return $this->stubDir($framework).'/js/node_modules';
     }
 
     private function copyLockFile(string $framework): void
