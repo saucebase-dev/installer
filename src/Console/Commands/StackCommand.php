@@ -348,7 +348,12 @@ class StackCommand extends Command
             json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES).PHP_EOL,
         );
 
+        // Another workspace on the same core may have linked its own: follow this app. A
+        // real folder there is someone's own install, left alone.
         $link = $this->corePackagesLink($framework);
+        if (is_link($link) && readlink($link) !== $app.'/node_modules') {
+            unlink($link);
+        }
         if (! file_exists($link) && ! is_link($link)) {
             symlink($app.'/node_modules', $link);
         }

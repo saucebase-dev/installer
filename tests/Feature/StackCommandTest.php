@@ -337,6 +337,19 @@ class StackCommandTest extends TestCase
         $this->assertArrayNotHasKey('*', $config['compilerOptions']['paths']);
     }
 
+    /** Another workspace on the same core (a template's app) ran it last: follow this app. */
+    public function test_dev_mode_repoints_a_package_link_left_by_another_workspace(): void
+    {
+        $core = $this->linkCore();
+        $this->seedFakeStubs('vue');
+        $this->files->ensureDirectoryExists($core.'/stubs/stack/vue/js');
+        symlink($this->tmpDir.'-elsewhere/node_modules', $core.'/stubs/stack/vue/js/node_modules');
+
+        $this->artisan('stack vue --dev')->assertSuccessful();
+
+        $this->assertSame(realpath($this->tmpDir).'/node_modules', readlink($core.'/stubs/stack/vue/js/node_modules'));
+    }
+
     public function test_dev_mode_react_includes_tsx_in_the_core_tsconfig(): void
     {
         $core = $this->linkCore();
