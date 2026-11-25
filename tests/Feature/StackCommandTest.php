@@ -53,6 +53,7 @@ class StackCommandTest extends TestCase
     protected function tearDown(): void
     {
         $this->files->deleteDirectory($this->tmpDir);
+        $this->files->deleteDirectory($this->tmpDir.'-core');
         parent::tearDown();
     }
 
@@ -298,6 +299,90 @@ class StackCommandTest extends TestCase
     }
 
     /** Bind a StackCommand that counts runNpmInstall() calls instead of shelling out. */
+    // -------------------------------------------------------------------------
+    // Contributor checkout: core symlinked
+    // -------------------------------------------------------------------------
+
+    /** Storybook's docgen and editors find core's components by their real path: they need a tsconfig there. */
+    public function test_dev_mode_gives_a_symlinked_core_a_tsconfig_that_extends_the_app(): void
+    {
+        $core = $this->linkCore();
+        $this->seedFakeStubs('vue');
+
+        $this->artisan('stack vue --dev')->assertSuccessful();
+
+        $app = realpath($this->tmpDir);
+        $config = json_decode(file_get_contents($core.'/stubs/stack/vue/js/tsconfig.json'), true);
+        $this->assertSame($app.'/tsconfig.json', $config['extends']);
+        $this->assertSame([$app.'/vendor/saucebase/core/stubs/stack/vue/js/*'], $config['compilerOptions']['paths']['@/*']);
+        $this->assertSame(['**/*.ts', '**/*.vue'], $config['include']);
+    }
+
+    /**
+     * Packages resolve from core's real path through a link to the app's node_modules, as
+     * from inside the app: a `*` path mapping would skip packages' `exports`
+     * (`storybook/test`) and never reach type references (`vite/client`).
+     */
+    public function test_dev_mode_links_a_symlinked_core_to_the_app_packages(): void
+    {
+        $core = $this->linkCore();
+        $this->seedFakeStubs('vue');
+
+        $this->artisan('stack vue --dev')->assertSuccessful();
+
+        $link = $core.'/stubs/stack/vue/js/node_modules';
+        $this->assertTrue(is_link($link));
+        $this->assertSame(realpath($this->tmpDir).'/node_modules', readlink($link));
+        $config = json_decode(file_get_contents($core.'/stubs/stack/vue/js/tsconfig.json'), true);
+        $this->assertArrayNotHasKey('*', $config['compilerOptions']['paths']);
+    }
+
+    /** Another workspace on the same core (a template's app) ran it last: follow this app. */
+    public function test_dev_mode_repoints_a_package_link_left_by_another_workspace(): void
+    {
+        $core = $this->linkCore();
+        $this->seedFakeStubs('vue');
+        $this->files->ensureDirectoryExists($core.'/stubs/stack/vue/js');
+        symlink($this->tmpDir.'-elsewhere/node_modules', $core.'/stubs/stack/vue/js/node_modules');
+
+        $this->artisan('stack vue --dev')->assertSuccessful();
+
+        $this->assertSame(realpath($this->tmpDir).'/node_modules', readlink($core.'/stubs/stack/vue/js/node_modules'));
+    }
+
+    public function test_dev_mode_react_includes_tsx_in_the_core_tsconfig(): void
+    {
+        $core = $this->linkCore();
+        $this->seedFakeStubs('react');
+
+        $this->artisan('stack react --dev')->assertSuccessful();
+
+        $config = json_decode(file_get_contents($core.'/stubs/stack/react/js/tsconfig.json'), true);
+        $this->assertSame(['**/*.ts', '**/*.tsx'], $config['include']);
+    }
+
+    /** Core from Packagist sits inside the app, where the app's tsconfig already reaches. */
+    public function test_dev_mode_leaves_a_core_inside_vendor_alone(): void
+    {
+        $this->seedFakeStubs('vue');
+
+        $this->artisan('stack vue --dev')->assertSuccessful();
+
+        $this->assertFileDoesNotExist($this->tmpDir.'/vendor/saucebase/core/stubs/stack/vue/js/tsconfig.json');
+    }
+
+    public function test_reset_removes_the_core_tsconfig(): void
+    {
+        $core = $this->linkCore();
+        $this->seedFakeStubs('vue');
+        $this->artisan('stack vue --dev')->assertSuccessful();
+
+        $this->artisan('stack --reset')->assertSuccessful();
+
+        $this->assertFileDoesNotExist($core.'/stubs/stack/vue/js/tsconfig.json');
+        $this->assertFalse(is_link($core.'/stubs/stack/vue/js/node_modules'));
+    }
+
     private function bindNpmSpy(): StackCommand
     {
         $tmpDir = $this->tmpDir;
@@ -615,6 +700,17 @@ class StackCommandTest extends TestCase
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /** Core as a contributor has it: a clone outside the app, linked into vendor/. */
+    private function linkCore(): string
+    {
+        $core = $this->tmpDir.'-core';
+        $this->files->makeDirectory($core, 0755, true);
+        $this->files->deleteDirectory($this->tmpDir.'/vendor/saucebase/core');
+        symlink($core, $this->tmpDir.'/vendor/saucebase/core');
+
+        return $core;
+    }
 
     private function seedFakeTemplate(): void
     {
